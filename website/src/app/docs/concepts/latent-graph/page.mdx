@@ -1,0 +1,77 @@
+import PrevNext from "@/components/Docs/PrevNext";
+
+export const metadata = {
+  title: "Latent Graph · LatentGraphRAG",
+  description: "Query-conditioned connectivity through recursive dense retrieval.",
+};
+
+# Latent graph
+
+The central idea: instead of traversing a static knowledge graph at query time,
+**let the encoder define the graph**. At hop `t`, the recursive query-state embedding of the
+question together with what has already been retrieved induces an implicit edge to
+every candidate in the corpus, weighted by cosine similarity.
+
+A retrieval path ⟨x₁, …, x_t⟩ is a path in this query-conditioned latent graph: an edge
+from the current context to a candidate exists when the encoder assigns it high
+similarity. Edges are never materialized — they're defined implicitly by the encoder's
+similarity geometry, every retrieval step.
+
+## Formal sketch
+
+At hop `t`, the **retrieval context** is
+
+```text
+c_t = [q; x_1; x_2; ...; x_{t-1}]
+```
+
+— the question concatenated with previously retrieved items. The encoder produces a
+single embedding `f_θ(c_t)`. The **score** of a candidate item `x` at hop `t` is
+
+```text
+w_t(x) = cos(f_θ(c_t), f_θ(x))
+```
+
+and the **path score** is the multiplicative accumulation along the path:
+
+```text
+S(⟨x_1, ..., x_t⟩) = ∏_{j=1}^{t} w_j(x_j)
+```
+
+This is the same scoring principle as BeamDR-style multi-hop dense retrieval, applied
+uniformly to documents, relational memories, joint indices, or dual trees.
+
+## Why &quot;latent&quot;?
+
+The edges in this graph are never materialized. They&apos;re defined implicitly by the
+encoder&apos;s similarity geometry — every candidate is potentially connected to every
+context, with the connection&apos;s strength determined at retrieval time.
+
+This contrasts sharply with traditional graph-based RAG, which treats the **extracted**
+knowledge graph as the retrieval substrate: edges are fixed at indexing time, and the
+retriever traverses them. Latent edges, in contrast, adapt to the query.
+
+## What the latent graph buys you
+
+- **No decomposition needed.** The encoder learns to focus on what&apos;s still
+  missing given what&apos;s been retrieved; no separate question-decomposition LLM call.
+- **Robust to incomplete extraction.** If OpenIE missed a key relation, the latent graph
+  can still surface the right document via dense similarity to the context.
+- **Composable.** The same primitive works whether you index documents, memories, or
+  both — exactly because edges aren&apos;t pre-baked.
+
+## Connection to search strategies
+
+The latent-graph view also clarifies what each search strategy _is_:
+
+- **Full expansion** explores the entire b-ary subtree of the latent graph up to depth H.
+- **BeamDR** keeps only the top-B paths by cumulative score at each hop — a pruned BFS
+  on the latent graph.
+- **Cross-view beam** traverses two latent graphs (documents and memories) jointly,
+  keeping a single beam across both.
+
+All five search strategies are just different traversal policies on the same latent
+graph. See the **[Search Strategies](/docs/search/full-expansion)** pages for the
+animated walkthrough of each.
+
+<PrevNext pathname="/docs/concepts/latent-graph" />

@@ -1,0 +1,57 @@
+import PrevNext from "@/components/Docs/PrevNext";
+
+export const metadata = {
+  title: "Tutorial 1 · Install — LatentGraphRAG",
+  description: "Five-minute install with the recommended stack.",
+};
+
+# Tutorial 1: Install
+
+Welcome. This tutorial walks you through a full LatentGraphRAG loop end to end —
+building a small graph, encoding documents and memories, running retrieval in every
+corpus mode, and measuring Recall\@5 against gold documents. It takes ~5 minutes if
+you already have a Python 3.10+ environment.
+
+## What you&apos;ll build
+
+By the end you&apos;ll have:
+- A persisted graph index over 5 mini-MuSiQue documents
+- Working chunk and memory FAISS indices
+- A side-by-side comparison of Document-Only, Memory-Only, Joint-Index, and Dual-Tree
+- A Recall\@5 number you can plot
+
+## Install
+
+```bash
+pip install "latentgraphrag[faiss-cpu,gritlm,openai]"
+```
+
+That gives you the **recommended stack**:
+- **GritHopper-7B** as encoder
+- **FAISS-CPU** for ANN search
+- **OpenAI** client for OpenIE + verbalization
+
+You&apos;ll also need an OpenAI-compatible API key — anything that speaks the Chat
+Completions API works (OpenAI, Azure OpenAI, or a local vLLM server):
+
+```bash
+export OPENAI_API_KEY="sk-..."
+```
+
+> **Want to run OpenIE locally?** Swap `openai` for `vllm`:
+> `pip install "latentgraphrag[faiss-cpu,gritlm,vllm]"`. vLLM with prefix caching
+> batches the few-shot OpenIE prompts efficiently across a whole corpus.
+
+## Verify the install
+
+```python title="verify.py"
+import latentgraphrag as lgr
+
+print(lgr.__version__)               # "0.1.0a0" or later
+print(lgr.LatentGraphRAG)            # <class 'latentgraphrag.pipeline.LatentGraphRAG'>
+print(lgr.RelationalMemory)          # <class 'latentgraphrag.memory.memory.RelationalMemory'>
+```
+
+If imports complete cleanly you&apos;re ready for **step 2: building a graph**.
+
+<PrevNext pathname="/docs/tutorial/01-install" />

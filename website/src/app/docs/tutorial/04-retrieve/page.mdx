@@ -1,0 +1,89 @@
+import PrevNext from "@/components/Docs/PrevNext";
+import CombinationsMatrix from "@/components/Docs/demos/CombinationsMatrix";
+
+export const metadata = {
+  title: "Tutorial 4 · Retrieve — LatentGraphRAG",
+  description: "Run every corpus × search × fusion combination on the mini corpus.",
+};
+
+# Tutorial 4: Retrieve
+
+This is where the orthogonal axes pay off. We&apos;ll run six representative
+configurations against the same query and see how each ranks our five documents.
+
+## Set up
+
+```python title="setup.py"
+import latentgraphrag as lgr
+rag = lgr.LatentGraphRAG.load("./my_corpus")
+
+queries = ["Where does Alice live?"]
+```
+
+## Run every combination
+
+```python title="compare.py"
+configs = [
+    # Single-view
+    ("doc-only / full",    dict(corpus="document_only", search="full_expansion", branching=3)),
+    ("doc-only / beamdr",  dict(corpus="document_only", search="beamdr", beam_width=5)),
+    ("memory-only / full", dict(corpus="memory_only", search="full_expansion", branching=3)),
+    ("joint-index / full", dict(corpus="joint_index", search="full_expansion", branching=5)),
+
+    # Dual-tree
+    ("dual / RRF",         dict(corpus="dual_tree", search="full_expansion",
+                                fusion="rrf", branching_doc=3, branching_memory=5)),
+    ("dual / agreement",   dict(corpus="dual_tree", search="full_expansion",
+                                fusion="agreement", branching_doc=3, branching_memory=5,
+                                gamma=0.0)),
+    ("cross-view beam",    dict(corpus="dual_tree", search="cross_view_beam",
+                                beam_width=10)),
+]
+
+for label, kwargs in configs:
+    results = rag.retrieve(queries, max_hops=4, k=3, **kwargs)
+    print(f"\n=== {label} ===")
+    for doc_id, score in zip(results[0].documents, results[0].scores):
+        print(f"  {score:>7.3f}  {doc_id}")
+```
+
+<div className="not-prose my-6 rounded-2xl border border-gray-200 bg-gradient-to-br from-gray-50 to-white p-5 shadow-sm">
+  <p className="text-[10px] font-bold uppercase tracking-wider text-blue-700 mb-1">Live combinations</p>
+  <p className="text-sm text-gray-600 mb-4">
+    Pick a corpus / search / fusion triple — the animation mirrors what each call in
+    the loop above does at retrieval time.
+  </p>
+  <CombinationsMatrix />
+</div>
+
+Each block prints the top-3 documents and their cumulative scores. With a corpus this
+small, all configs converge on the same gold document — but the path scores expose how
+&quot;sure&quot; each one was. On real benchmarks the gaps between configurations show
+up clearly in Recall\@5.
+
+## Validation rules in action
+
+Try a nonsensical combination to see the validator surface a clear error:
+
+```python title="bad_combo.py"
+# fusion is only valid for dual_tree:
+rag.retrieve(queries, corpus="document_only", fusion="rrf")
+# -> ValueError: Fusion is only meaningful when corpus='dual_tree' —
+#                single-view retrieval has nothing to fuse.
+
+# cross_view_beam requires dual_tree:
+rag.retrieve(queries, corpus="document_only", search="cross_view_beam")
+# -> ValueError: search='cross_view_beam' requires corpus='dual_tree'.
+
+# Memory modes need a built memory index:
+docs_only = lgr.LatentGraphRAG.from_documents(documents=DOCS, save_dir="./tmp")
+docs_only.retrieve(queries, corpus="memory_only")
+# -> ValueError: Memory-only / joint / dual modes require a relational memory index.
+```
+
+See **[Three Orthogonal Axes](/docs/concepts/overview)** for the full rule list.
+
+Next: **[step 5 — evaluate](/docs/tutorial/05-evaluate)** computes Recall\@K against
+gold documents.
+
+<PrevNext pathname="/docs/tutorial/04-retrieve" />

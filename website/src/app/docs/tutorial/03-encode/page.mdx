@@ -1,0 +1,88 @@
+import PrevNext from "@/components/Docs/PrevNext";
+
+export const metadata = {
+  title: "Tutorial 3 · Encode — LatentGraphRAG",
+  description: "How chunks and memories get encoded, and how to swap encoders.",
+};
+
+# Tutorial 3: Encode
+
+Encoding is the bridge between text and the latent graph. In step 2,
+`rag.build_graph(...)` ran the encoder twice — once over chunks and once over
+verbalized memories. This step explains what happened and how to control it.
+
+## The two encoder calls
+
+Inside `build_graph`, LatentGraphRAG runs:
+
+```python title="conceptual encoding flow"
+# Once per indexing run, after chunking:
+chunk_vecs  = encoder.encode(chunks,   is_query=False)   # doc instruction
+mem_vecs    = encoder.encode(memories, is_query=False)   # doc instruction
+
+# At retrieve time, once per hop:
+ctx_vecs    = encoder.encode(contexts, is_query=True)    # query instruction
+```
+
+The same encoder is used everywhere, but the **role** (query vs document) controls
+which instruction it sees. For the default `GritHopperEncoder`:
+
+| Role | Instruction |
+|------|-------------|
+| Document | `"Represent the document: "` |
+| Query | The multi-hop, decomposition-free retrieval prompt (see `latentgraphrag.encoders.grithopper.DEFAULT_QUERY_INSTRUCTION`) |
+
+Vectors are L2-normalized so inner-product equals cosine similarity.
+
+## Why multi-hop matters
+
+At each retrieval hop, the query context grows: `c_t = [q; x_1; …; x_{t-1}]`. The
+encoder has to keep producing useful similarity signal over that growing prompt. A
+generic sentence-similarity model trained on short snippets won't do this well — it
+hasn't seen this regime in training. The bundled encoders (GritHopper, NV-Embed-v2,
+the OpenAI embeddings family) all handle it; a custom encoder needs to too.
+
+## Available encoders
+
+- `GritHopperEncoder` — the default, multi-hop trained, requires `pip install latentgraphrag[gritlm]`
+- `OpenAIEncoder` — OpenAI / OpenAI-compatible API embeddings (text-embedding-3-large by default)
+- `NVEmbedV2Encoder` — NV-Embed-v2
+
+See **[API → Encoders](/docs/api/encoders)** for the full reference.
+
+## A custom multi-hop encoder
+
+`BaseEncoder` is a tiny ABC; any class that implements
+`encode(texts, *, instruction=None, is_query=False) -> np.ndarray` plugs in. The
+important part is that your `encode` does something *different* for queries vs
+documents — that's what makes multi-hop work.
+
+```python title="custom_encoder.py"
+import numpy as np
+from latentgraphrag.encoders.base import BaseEncoder
+
+class MyMultiHopEncoder(BaseEncoder):
+    dim = 768
+    normalize = True
+
+    def __init__(self, my_model):
+        self._model = my_model
+
+    def encode(self, texts, *, instruction=None, is_query=False):
+        # Role-aware conditioning: different prompts / adapters / heads for
+        # is_query=True (multi-hop context) vs is_query=False (passages).
+        vecs = self._model.encode(texts, is_query=is_query).astype(np.float32)
+        return self._l2_normalize(vecs) if self.normalize else vecs
+```
+
+Plug it in:
+
+```python
+import latentgraphrag as lgr
+rag = lgr.LatentGraphRAG(encoder=MyMultiHopEncoder(my_model), openie_llm="gpt-4o-mini")
+```
+
+Next: **[step 4 — retrieve](/docs/tutorial/04-retrieve)** runs every corpus mode and
+search strategy side by side, with a live combinations matrix.
+
+<PrevNext pathname="/docs/tutorial/03-encode" />

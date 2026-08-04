@@ -1,0 +1,66 @@
+name: Verify website build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "website/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Resolve base path
+        # A project site is served from /<repo>, so the base path has to match or
+        # every asset and every data fetch 404s. Derived from github.repository,
+        # which is set for every trigger, so a fork or a rename needs no edit.
+        # A user/org site (<owner>.github.io) is served at the root and gets "".
+        run: |
+          repo='${{ github.repository }}'
+          name="${repo#*/}"
+          owner="${repo%%/*}"
+          shopt -s nocasematch
+          if [[ "$name" == "$owner.github.io" ]]; then
+            echo "NEXT_PUBLIC_BASE_PATH=" >> "$GITHUB_ENV"
+          else
+            echo "NEXT_PUBLIC_BASE_PATH=/$name" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build
+        run: npm run build
+
+      - name: Disable Jekyll
+        # without this, GitHub Pages drops the _next/ directory
+        run: touch out/.nojekyll
+
+
+      - name: Check the export produced what Pages needs
+        run: |
+          test -f out/index.html
+          test -f out/.nojekyll
+          test -f out/traces/index.html
+          test -f out/data/runs.json
+          echo "export OK: $(du -sh out | cut -f1)"

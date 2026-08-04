@@ -1,0 +1,128 @@
+[
+ {
+  "dataset": "musique",
+  "method": "closed_book",
+  "n": 1000,
+  "n_with_seed": 0,
+  "mean_seed_docs": 0.0
+ },
+ {
+  "dataset": "musique",
+  "method": "doc_only_read",
+  "n": 1000,
+  "n_with_seed": 1000,
+  "mean_seed_docs": 10.0
+ },
+ {
+  "dataset": "musique",
+  "method": "dual_z_read",
+  "n": 1000,
+  "n_with_seed": 1000,
+  "mean_seed_docs": 10.0
+ },
+ {
+  "dataset": "musique",
+  "method": "hipporag_read",
+  "n": 1000,
+  "n_with_seed": 1000,
+  "mean_seed_docs": 10.0
+ },
+ {
+  "dataset": "musique",
+  "method": "hybrid_union_read",
+  "n": 999,
+  "n_with_seed": 999,
+  "mean_seed_docs": 14.97
+ },
+ {
+  "dataset": "musique",
+  "method": "latentgraph_read",
+  "n": 1000,
+  "n_with_seed": 1000,
+  "mean_seed_docs": 10.0
+ },
+ {
+  "dataset": "musique",
+  "method": "memory_only_read",
+  "n": 1000,
+  "n_with_seed": 1000,
+  "mean_seed_docs": 10.0
+ },
+ {
+  "dataset": "musique",
+  "method": "qwen_read",
+  "n": 1000,
+  "n_with_seed": 1000,
+  "mean_seed_docs": 10.0
+ },
+ {
+  "dataset": "musique",
+  "method": "reasonmcb_read",
+  "n": 1000,
+  "n_with_seed": 1000,
+  "mean_seed_docs": 10.0
+ },
+ {
+  "dataset": "fanoutqa",
+  "method": "closed_book",
+  "n": 310,
+  "n_with_seed": 0,
+  "mean_seed_docs": 0.0
+ },
+ {
+  "dataset": "fanoutqa",
+  "method": "doc_only_read",
+  "n": 310,
+  "n_with_seed": 310,
+  "mean_seed_docs": 10.0
+ },
+ {
+  "dataset": "fanoutqa",
+  "method": "dual_z_read",
+  "n": 310,
+  "n_with_seed": 310,
+  "mean_seed_docs": 9.97
+ },
+ {
+  "dataset": "fanoutqa",
+  "method": "hipporag_read",
+  "n": 310,
+  "n_with_seed": 310,
+  "mean_seed_docs": 10.0
+ },
+ {
+  "dataset": "fanoutqa",
+  "method": "hybrid_union_read",
+  "n": 310,
+  "n_with_seed": 310,
+  "mean_seed_docs": 15.68
+ },
+ {
+  "dataset": "fanoutqa",
+  "method": "latentgraph_read",
+  "n": 310,
+  "n_with_seed": 310,
+  "mean_seed_docs": 9.7
+ },
+ {
+  "dataset": "fanoutqa",
+  "method": "memory_only_read",
+  "n": 310,
+  "n_with_seed": 310,
+  "mean_seed_docs": 9.95
+ },
+ {
+  "dataset": "fanoutqa",
+  "method": "qwen_read",
+  "n": 310,
+  "n_with_seed": 310,
+  "mean_seed_docs": 10.0
+ },
+ {
+  "dataset": "fanoutqa",
+  "method": "reasonmcb_read",
+  "n": 310,
+  "n_with_seed": 310,
+  "mean_seed_docs": 10.0
+ }
+]

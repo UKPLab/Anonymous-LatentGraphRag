@@ -1,0 +1,80 @@
+[build-system]
+requires = ["hatchling>=1.18"]
+build-backend = "hatchling.build"
+
+[project]
+name = "latentgraphrag"
+version = "0.1.0a0"
+description = "LatentGraphRAG: rethinking graph-based multi-hop retrieval through contextual dense retrieval over documents and verbalized relational memories."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+keywords = [
+    "retrieval",
+    "rag",
+    "knowledge-graph",
+    "dense-retrieval",
+    "multi-hop",
+    "grithopper",
+    "latent-graph",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "pyarrow>=14.0",
+    "python-igraph>=0.11",
+    "tqdm>=4.65",
+    "tiktoken>=0.7",
+    "tenacity>=8.2",
+    "httpx>=0.26",
+    "pydantic>=2.6",
+]
+
+[project.optional-dependencies]
+faiss-cpu = ["faiss-cpu>=1.7.4"]
+faiss-gpu = ["faiss-gpu>=1.7.4"]
+gritlm = ["gritlm>=1.0.2", "torch>=2.1", "transformers>=4.45"]
+openai = ["openai>=1.40"]
+vllm = ["vllm>=0.6", "torch>=2.1", "transformers>=4.45"]
+nvembed = ["torch>=2.1", "transformers>=4.45"]
+all = [
+    "latentgraphrag[faiss-cpu,gritlm,openai,nvembed]",
+]
+dev = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.21",
+    "ruff>=0.4",
+    "mypy>=1.8",
+    "types-tqdm",
+]
+
+[project.urls]
+Homepage = "https://github.com/anonymous/latentgraphrag"
+Documentation = "https://latentgraphrag.dev/docs"
+Repository = "https://github.com/anonymous/latentgraphrag"
+
+[tool.hatch.build.targets.wheel]
+packages = ["latentgraphrag"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+asyncio_mode = "auto"

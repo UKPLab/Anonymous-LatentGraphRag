@@ -1,0 +1,144 @@
+import PrevNext from "@/components/Docs/PrevNext";
+
+export const metadata = {
+  title: "Tutorial 2 · Build a Graph — LatentGraphRAG",
+  description: "Chunk documents, extract triples, verbalize memories, and persist to disk.",
+};
+
+# Tutorial 2: Build a Graph
+
+We&apos;ll use five documents shaped like the kinds of items you&apos;d see in MuSiQue.
+Each document mentions a few entities (people, cities, organizations); together they
+support a small set of multi-hop questions.
+
+## The mini corpus
+
+```python title="corpus.py"
+DOCS = [
+    "Alice lives in Paris. She is a researcher at the Sorbonne.",
+    "Bob knows Alice and works in Berlin at a robotics startup.",
+    "Charlie travels often between Paris and Berlin for his job.",
+    "Dora is a close friend of Alice and Bob since university.",
+    "The cafe Procope in Paris is famous for its croissants and history.",
+]
+```
+
+## Build the graph (via API)
+
+```python title="build_api.py"
+import latentgraphrag as lgr
+from corpus import DOCS
+
+rag = lgr.LatentGraphRAG(
+    encoder="GritHopper-7B",
+    openie_llm="gpt-4o-mini",
+    verbalizer_llm="gpt-4o-mini",
+)
+
+result = rag.build_graph(documents=DOCS, save_dir="./my_corpus")
+
+print(f"Chunks:    {len(result.chunks)}")
+print(f"Memories:  {len(result.memories)}")
+print(f"Graph:     {result.store.vcount()} nodes, {result.store.ecount()} edges")
+```
+
+You should see something like:
+
+```text
+Chunks:    5
+Memories:  18    # depends on the LLM; one to ~5 triples per chunk
+Graph:     ~30 nodes, ~45 edges
+```
+
+## Or build with vLLM (self-hosted, batched, prefix-cached)
+
+For larger corpora you don&apos;t want to pay per-API-call latency or rate limits.
+Self-host an OpenIE LLM with vLLM and `LatentGraphRAG` will batch the entire NER pass
+and the entire triple-extraction pass — the few-shot prompt prefix is shared across
+all chunks, so prefix caching turns the demonstration tokens into a one-time cost.
+
+```python title="build_vllm.py"
+import latentgraphrag as lgr
+from latentgraphrag.llm.vllm import VLLMOffline
+from corpus import DOCS
+
+llm = VLLMOffline(
+    model="meta-llama/Llama-3.3-70B-Instruct",   # or any chat-tuned Llama / Qwen
+    tensor_parallel_size=4,                       # spread across 4 GPUs
+    gpu_memory_utilization=0.8,
+    max_model_len=4096,
+)
+
+rag = lgr.LatentGraphRAG(
+    encoder="GritHopper-7B",
+    openie_llm=llm,
+    verbalizer_llm=llm,
+)
+rag.build_graph(documents=DOCS, save_dir="./my_corpus")
+```
+
+The same `VLLMOffline` instance handles both NER and triple extraction. Indexing scales
+roughly linearly with corpus size; doubling the corpus doubles the wall-clock time
+rather than the per-call latency.
+
+## What just happened
+
+The `build_graph` call ran a four-stage pipeline:
+
+1. **Chunking** — `TokenChunker` split each document at the 512-token mark (with 50
+   tokens of overlap). Tiny documents like ours become one chunk each.
+2. **OpenIE** — `gpt-4o-mini` extracted named entities and (subject, relation, object)
+   triples per chunk. Cached to `./my_corpus/openie_cache.json`.
+3. **Verbalization** — every triple `(h, r, t)` was rewritten as a single natural-language
+   sentence ("Alice lives in Paris.") and stored as a `RelationalMemory`.
+4. **Graph build** — chunk, entity, and memory nodes were added to an igraph, connected
+   by `chunk_entity`, `chunk_memory`, and `entity_relation` edges.
+
+## What landed on disk
+
+```text
+./my_corpus/
+├── manifest.json               # encoder id, openie llm, doc count, faiss config
+├── graph.picklez               # igraph binary
+├── memories.parquet            # hash_id, head, relation, tail, sentence, chunk_id, doc_id
+├── openie_cache.json           # cached NER + triples per chunk
+└── embeddings/
+    ├── chunks.parquet          # hash_id, content, embedding (float32)
+    ├── chunks.faiss            # FAISS IndexFlatIP (built lazily on first search)
+    ├── memories.parquet        # hash_id, content, embedding
+    └── memories.faiss
+```
+
+Inspect the memories table:
+
+```python title="inspect.py"
+import pandas as pd
+df = pd.read_parquet("./my_corpus/memories.parquet")
+print(df[["head", "relation", "tail", "sentence"]].head())
+```
+
+You&apos;ll see rows like:
+
+| head | relation | tail | sentence |
+|------|----------|------|----------|
+| Alice | lives in | Paris | Alice lives in Paris. |
+| Bob | knows | Alice | Bob knows Alice. |
+| Bob | works in | Berlin | Bob works in Berlin. |
+| Charlie | travels between | Paris and Berlin | Charlie travels between Paris and Berlin. |
+
+## Round-trip
+
+Re-open the index from disk in a fresh process:
+
+```python title="roundtrip.py"
+import latentgraphrag as lgr
+
+rag = lgr.LatentGraphRAG.load("./my_corpus")
+print(rag.store.vcount(), rag.store.ecount())
+print(len(rag.chunks_index), len(rag.memories_index))
+```
+
+Next: **[step 3 — encoding](/docs/tutorial/03-encode)** explains what `build_graph`
+actually did with the encoder, and how to swap it for a different one.
+
+<PrevNext pathname="/docs/tutorial/02-build-graph" />

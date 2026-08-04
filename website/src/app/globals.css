@@ -1,0 +1,108 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #1e293b;
+  --primary: #3b82f6;
+  --primary-light: #60a5fa;
+  --secondary: #22c55e;
+  --secondary-light: #4ade80;
+  --accent: #f97316;
+  --accent-light: #fb923c;
+  --card-bg: #ffffff;
+  --muted: #64748b;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), system-ui, sans-serif;
+}
+
+/* Smooth scrolling */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Glow effects */
+.glow-primary {
+  box-shadow: 0 0 20px rgba(59, 130, 246, 0.4);
+}
+
+.glow-secondary {
+  box-shadow: 0 0 20px rgba(34, 197, 94, 0.4);
+}
+
+.glow-accent {
+  box-shadow: 0 0 20px rgba(249, 115, 22, 0.4);
+}
+
+/* Animation utilities */
+@keyframes pulse-glow {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-10px); }
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+/* ============================================================
+ * rehype-pretty-code / shiki — syntax highlighting inside docs
+ * keepBackground=false in next.config.ts, so we style the host <pre>.
+ * Each line is a <span data-line>; each token a <span style="color: ...">.
+ * ============================================================ */
+.prose-docs pre code {
+  display: grid;
+  counter-reset: line;
+}
+
+.prose-docs pre code [data-line] {
+  padding: 0 0.25rem;
+  border-left: 2px solid transparent;
+}
+
+.prose-docs pre code [data-highlighted-line] {
+  background-color: rgba(59, 130, 246, 0.12);
+  border-left-color: #3b82f6;
+}
+
+.prose-docs pre code [data-highlighted-chars] {
+  background-color: rgba(99, 102, 241, 0.2);
+  border-radius: 3px;
+  padding: 0 0.1rem;
+}
+
+.prose-docs pre code .line {
+  min-height: 1rem;
+}
+
+/* Heading anchor — applied by rehype-autolink-headings */
+.prose-docs .heading-anchor {
+  color: inherit;
+  text-decoration: none;
+}
+
+.prose-docs .heading-anchor:hover {
+  text-decoration: none;
+}
+
+.prose-docs .heading-anchor::after {
+  content: "";
+}

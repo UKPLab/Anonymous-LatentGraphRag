@@ -1,0 +1,98 @@
+import PrevNext from "@/components/Docs/PrevNext";
+import CombinationsMatrix from "@/components/Docs/demos/CombinationsMatrix";
+
+export const metadata = {
+  title: "Three Orthogonal Axes · LatentGraphRAG",
+  description: "How corpus, search, and fusion factor independently in LatentGraphRAG.",
+};
+
+# Three orthogonal axes
+
+LatentGraphRAG&apos;s API factors retrieval into **three independent choices**:
+
+| Axis | Values |
+|------|--------|
+| `corpus` | `document_only` · `memory_only` · `joint_index` · `dual_tree` |
+| `search` | `full_expansion` · `beamdr` · `cross_view_beam` · `mmr` · `single_hop` |
+| `fusion` | `rrf` · `agreement` (dual_tree only) |
+
+The core observation: the same retrieval primitive — recursive dense
+retrieval with multiplicative path scoring — works over documents, memories, or both.
+Search strategies and fusion methods then plug in independently. So instead of
+enumerating every (corpus, search, fusion) triple as a separate algorithm, we expose
+them as three orthogonal knobs.
+
+## The factoring
+
+Think of retrieval as a product of three independent decisions:
+
+```text
+[ corpus ] × [ search ] × [ fusion ] → ranked documents
+```
+
+- **`corpus`** decides _which index (or pair of indices)_ the search runs over.
+- **`search`** decides _how the iterative retrieval expands_ at each hop.
+- **`fusion`** decides _how two ranked lists are combined_ — only meaningful when
+  `corpus="dual_tree"`.
+
+Mixing-and-matching gives you a clean matrix of configurations. The legacy research
+codebase called these &quot;ablations 1–8&quot;; in this package every one of those reduces
+to a single call.
+
+## Canonical configurations
+
+```python title="strong defaults to start from"
+# Document-Only Full Tree (b=3, H=4) — strong document baseline
+rag.retrieve(q, corpus="document_only", search="full_expansion", branching=3, max_hops=4)
+
+# Memory-Only Full Expansion (b=3, H=4) — best on FanOutQA
+rag.retrieve(q, corpus="memory_only", search="full_expansion", branching=3, max_hops=4)
+
+# BeamDR (B=10) over documents
+rag.retrieve(q, corpus="document_only", search="beamdr", beam_width=10, max_hops=4)
+
+# Joint-Index Tree Search (b=5)
+rag.retrieve(q, corpus="joint_index", search="full_expansion", branching=5, max_hops=4)
+
+# Dual RRF, Full Expansion — best calibration-free fusion
+rag.retrieve(q, corpus="dual_tree", search="full_expansion", fusion="rrf",
+             branching_doc=3, branching_memory=5)
+
+# Full Dual-Tree + Agreement — best on MuSiQue R@10
+rag.retrieve(q, corpus="dual_tree", search="full_expansion", fusion="agreement",
+             branching_doc=3, branching_memory=5, gamma=0.0)
+
+# Cross-View Beam (B=10) — best on MuSiQue R@5
+rag.retrieve(q, corpus="dual_tree", search="cross_view_beam",
+             beam_width=10, max_hops=4)
+```
+
+## Validation rules
+
+The dispatcher rejects nonsensical combinations with informative errors:
+
+| Rule | Error you&apos;ll see |
+|------|----------------------|
+| `fusion` requires `corpus="dual_tree"` | `Fusion is only meaningful when corpus='dual_tree' — single-view retrieval has nothing to fuse.` |
+| `search="cross_view_beam"` requires `corpus="dual_tree"` | `search='cross_view_beam' requires corpus='dual_tree'.` |
+| `corpus="memory_only"` / `joint_index` / `dual_tree` requires a built memory index | `Memory-only / joint / dual modes require a relational memory index. Call build_graph() first.` |
+| Unknown values | `Invalid corpus='bogus'. Expected one of [...]` |
+
+## Try it
+
+<div className="not-prose my-6">
+  <CombinationsMatrix />
+</div>
+
+## Why this factoring matters
+
+Search and fusion strategies are first-class plug-ins. Adding a new search strategy
+(say, `mmr` for diversity-aware expansion) means writing one module — and the dispatcher
+composes it with every corpus and every fusion for free. The same goes for fusion: any
+new fusion automatically applies to every dual-tree configuration.
+
+You can see this matrix come alive on the **[Search Strategies](/docs/search/full-expansion)**
+pages, where each combination has its own animated visualization, or directly on the
+**[Combinations](/docs/combinations)** page.
+
+<PrevNext pathname="/docs/concepts/overview" />

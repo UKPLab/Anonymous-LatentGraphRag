@@ -1,0 +1,126 @@
+import PrevNext from "@/components/Docs/PrevNext";
+
+export const metadata = {
+  title: "Quickstart · LatentGraphRAG",
+  description: "Build a graph, retrieve, and evaluate in under five minutes.",
+};
+
+# Quickstart
+
+This page walks through the smallest useful end-to-end loop: index five documents, build
+a relational-memory graph, and run a strong dual-tree retrieval configuration. No
+training required; the encoder and OpenIE LLM are both off-the-shelf.
+
+## 1. Set your API key
+
+LatentGraphRAG uses an OpenAI-compatible API for OpenIE (entity + triple extraction) and
+verbalization. Anything that speaks the Chat Completions API works — OpenAI, Azure
+OpenAI, or a local vLLM server. Set the key:
+
+```bash
+export OPENAI_API_KEY="sk-..."
+```
+
+## 2. Build the graph
+
+```python title="build_index.py"
+import latentgraphrag as lgr
+
+documents = [
+    "Alice lives in Paris. She is a researcher at the Sorbonne.",
+    "Bob knows Alice and works in Berlin at a robotics startup.",
+    "Charlie travels often between Paris and Berlin for his job.",
+    "Dora is a close friend of Alice and Bob since university.",
+    "The cafe Procope in Paris is famous for its croissants and history.",
+]
+
+rag = lgr.LatentGraphRAG(
+    encoder="GritHopper-7B",
+    openie_llm="gpt-4o-mini",
+    verbalizer_llm="gpt-4o-mini",
+)
+
+rag.build_graph(documents=documents, save_dir="./my_corpus")
+```
+
+When `build_graph` returns, `./my_corpus/` contains the relational-memory graph (igraph
+binary), parquet files for chunks and memories, FAISS indices, and a manifest.
+
+> **Larger corpus? Use vLLM** to host OpenIE locally with batched, prefix-cached inference:
+> ```python
+> from latentgraphrag.llm.vllm import VLLMOffline
+> llm = VLLMOffline("meta-llama/Llama-3.3-70B-Instruct", gpu_memory_utilization=0.8)
+> rag = lgr.LatentGraphRAG(encoder="GritHopper-7B", openie_llm=llm, verbalizer_llm=llm)
+> ```
+
+## 3. Retrieve
+
+The retrieval API factors into three orthogonal axes — **corpus**, **search**, **fusion**.
+A strong default configuration:
+
+```python title="retrieve.py"
+results = rag.retrieve(
+    queries=["Where does Alice live?", "Who works in Berlin?"],
+    corpus="dual_tree",          # search both documents and relational memories
+    search="full_expansion",      # b-ary tree over hops 1..H
+    fusion="agreement",           # combine doc & memory views by score agreement
+    branching_doc=3,
+    branching_memory=5,
+    max_hops=4,
+    gamma=0.0,
+    k=10,
+)
+
+for r in results:
+    print(r.query)
+    for doc_id, score in zip(r.documents[:3], r.scores[:3]):
+        print(f"  {score:.3f}  {doc_id}")
+```
+
+## 4. Try other combinations
+
+```python
+# Document-only iterative search (the strong single-modality baseline)
+rag.retrieve(queries, corpus="document_only", search="full_expansion", branching=3, max_hops=4)
+
+# Memory-only over the verbalized triplets
+rag.retrieve(queries, corpus="memory_only", search="full_expansion", branching=3, max_hops=4)
+
+# BeamDR-style pruning instead of full expansion
+rag.retrieve(queries, corpus="document_only", search="beamdr", beam_width=10, max_hops=4)
+
+# Cross-view beam — one beam, two indices queried each step
+rag.retrieve(queries, corpus="dual_tree", search="cross_view_beam", beam_width=10, max_hops=4)
+```
+
+See the [Concepts overview](/docs/concepts/overview) for the full grid of valid
+combinations.
+
+## 5. Round-trip and evaluate
+
+```python title="evaluate.py"
+import latentgraphrag as lgr
+from latentgraphrag.evaluation import recall_at_k
+
+# Re-open from disk in a fresh process.
+rag = lgr.LatentGraphRAG.load("./my_corpus")
+
+gold = [["doc-of-alice"], ["doc-of-bob"]]
+results = rag.retrieve(
+    queries=["Where does Alice live?", "Who works in Berlin?"],
+    corpus="dual_tree",
+    search="full_expansion",
+    fusion="agreement",
+    k=10,
+)
+retrieved = [r.documents for r in results]
+print(f"Recall@5: {recall_at_k(retrieved, gold, k=5):.3f}")
+```
+
+## What now?
+
+- Want to understand why the three axes factor cleanly? See **[Why Orthogonal?](/docs/concepts/why-orthogonal)**.
+- Want a richer walkthrough on a MuSiQue subset? Start the **[Tutorial](/docs/tutorial/01-install)**.
+- Want to mix search strategies, fusion modes, and corpus views with animated visualizations? See the **[Search Strategies](/docs/search/full-expansion)** pages.
+
+<PrevNext pathname="/docs/quickstart" />

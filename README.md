@@ -2,9 +2,7 @@
 
 > **Anonymous ACL ARR submission — under review.**
 > Author names, affiliations, logos and personal links have been removed from this
-> repository and from the project site for anonymous review. The encoder checkpoint
-> is cited as prior work in the paper and is linked from the project page. Nothing
-> in the released trajectories or corpora has been altered.
+> repository and from the project site for anonymous review.
 
 > Rethinking graph-based multi-hop retrieval through recursive dense retrieval over documents and verbalized relational memories.
 

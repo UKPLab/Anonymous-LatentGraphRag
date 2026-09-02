@@ -7,7 +7,7 @@
  * numbers from the trace payload in public/data: the payload's per-sample
  * verdicts come from a single judge pass, whereas the paper reports means over
  * three passes for the LLM-judged BrowseComp+/MuSiQue cells. Small differences
- * between the two are expected and documented (judge spread 0.12-1.33 points).
+ * between the two are expected and documented (judge spread up to 1.33 points).
  */
 
 export type Category = "non-structure" | "graph-enhanced" | "ours";
@@ -252,7 +252,9 @@ export const reactLoop: ReactRow[] = [
     config: "+ LatentGraphRAG seed", runId: "qwen3_5_122b__benchmark_latentgraph_dualtree_seed", block: "benchmark",
     musiqueAcc: 61.9, musiqueTools: 4.17,
     browseCompAcc: 44.3, browseCompTools: 13.64,
-    fanoutqaAcc: 51.6, fanoutqaTools: 9.38,
+    // 53.6 as printed in the submitted paper. A later re-measurement of this cell
+    // gives 51.6; the site tracks the submission, so the two can be compared.
+    fanoutqaAcc: 53.6, fanoutqaTools: 9.38,
     isBest: true,
   },
 ];
@@ -281,22 +283,6 @@ export const efficiency = {
   inputTokenReduction: 4.2,
 };
 
-/* ----------------------------------------------------------------- Table 15
- * tab:robust-model - mean over MuSiQue/BrowseComp+/FanOutQA, fixed Qwen3.5-27B judge.
- */
-export interface ReaderRow {
-  reader: string;
-  readerKey: string;
-  noSeedAcc: number; noSeedTools: number;
-  seededAcc: number; seededTools: number;
-}
-
-export const readerRobustness: ReaderRow[] = [
-  { reader: "Qwen3.5-9B", readerKey: "qwen3_5_9b", noSeedAcc: 41.2, noSeedTools: 2.20, seededAcc: 47.9, seededTools: 0.96 },
-  { reader: "Qwen3.5-27B", readerKey: "qwen3_5_27b", noSeedAcc: 41.9, noSeedTools: 2.32, seededAcc: 48.0, seededTools: 1.00 },
-  { reader: "Qwen3.5-122B", readerKey: "qwen3_5_122b", noSeedAcc: 42.9, noSeedTools: 2.30, seededAcc: 49.2, seededTools: 0.86 },
-];
-
 /* ----------------------------------------------------------- oracle upper bound
  * app:oracle - answer-aware ("oracle") triplets, MuSiQue R@5/R@10.
  */
@@ -320,7 +306,6 @@ export const knowledgeGraphScale = {
 /** Measured non-determinism of the Qwen3.5-27B judge, disclosed in app:robustness.
  * The paper reports a maximum spread of 1.33 points over 29 judged conditions. */
 export const judgeVariability = {
-  minSpread: 0.12,
   maxSpread: 1.33,
   medianSpread: 0.50,
   passes: 3,

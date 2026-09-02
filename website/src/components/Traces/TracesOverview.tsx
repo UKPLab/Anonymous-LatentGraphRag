@@ -11,7 +11,6 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { ArrowRight, Database, FileText, Info } from "lucide-react";
 import {
   reactLoop,
-  readerRobustness,
   retrieveThenRead,
   judgeVariability,
   TRACE_DATASETS,
@@ -230,63 +229,6 @@ export default function TracesOverview() {
                         );
                       })}
                   </Fragment>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-      {/* ------------------------------------------- Table 15: cross-reader */}
-      <section className="mb-10">
-        <h2 className="text-lg font-semibold text-gray-900 mb-1">
-          Cross-reader robustness
-        </h2>
-        <p className="text-sm text-gray-500 mb-3">
-          Paper Table 15. Mean accuracy and tool calls over all three
-          benchmarks, fixed Qwen3.5-27B judge. Open a cell to read that
-          reader&apos;s {datasetLabel(ds)} trajectories.
-        </p>
-        <div className={CARD}>
-          <div className="overflow-x-auto">
-            <table className="min-w-full border-collapse">
-              <thead className="bg-gray-50 border-b border-gray-200">
-                <tr>
-                  <th className={TH}>Reader</th>
-                  <th className={TH}>Mean acc (no seed)</th>
-                  <th className={TH}>Mean acc (+ LatentGraphRAG)</th>
-                  <th className={TH}>Mean tools</th>
-                </tr>
-              </thead>
-              <tbody>
-                {readerRobustness.map((r) => (
-                  <tr
-                    key={r.reader}
-                    className="border-b border-gray-100 last:border-0 hover:bg-blue-50/30"
-                  >
-                    <td className={`${TD} font-medium`}>{r.reader}</td>
-                    <td className={TD}>
-                      <TraceLink
-                        runs={runs}
-                        dataset={ds}
-                        runId={`${r.readerKey}__no_seed`}
-                      >
-                        {num(r.noSeedAcc)}
-                      </TraceLink>
-                    </td>
-                    <td className={`${TD} font-semibold`}>
-                      <TraceLink
-                        runs={runs}
-                        dataset={ds}
-                        runId={`${r.readerKey}__latentgraph_dualtree_seed`}
-                      >
-                        {num(r.seededAcc)}
-                      </TraceLink>
-                    </td>
-                    <td className={TD}>
-                      {num(r.noSeedTools, 2)} → {num(r.seededTools, 2)}
-                    </td>
-                  </tr>
                 ))}
               </tbody>
             </table>

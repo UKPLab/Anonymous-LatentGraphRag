@@ -22,7 +22,6 @@ import { ArrowRight, Gauge, Layers } from "lucide-react";
 import {
   reactLoop,
   efficiency,
-  readerRobustness,
 } from "@/data/paperResults";
 
 const TD = "px-3 py-2 text-sm whitespace-nowrap";
@@ -168,47 +167,7 @@ export default function AgenticRagSection() {
         </div>
 
         {/* robustness */}
-        <div className="mt-12 grid lg:grid-cols-2 gap-6">
-          <div className="rounded-xl border border-gray-200 overflow-hidden">
-            <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-200">
-              <h3 className="text-sm font-semibold text-gray-900">
-                It is not one model
-              </h3>
-              <p className="text-xs text-gray-500">
-                Mean over all three benchmarks, fixed judge.
-              </p>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="min-w-full border-collapse">
-                <thead>
-                  <tr className="border-b border-gray-100">
-                    <th className={TH}>Reader</th>
-                    <th className={TH}>No seed</th>
-                    <th className={TH}>+ LatentGraphRAG</th>
-                    <th className={TH}>Tools</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {readerRobustness.map((r) => (
-                    <tr
-                      key={r.reader}
-                      className="border-b border-gray-50 last:border-0"
-                    >
-                      <td className={`${TD} text-gray-800`}>{r.reader}</td>
-                      <td className={`${TD} text-gray-500`}>{r.noSeedAcc}</td>
-                      <td className={`${TD} font-semibold text-gray-900`}>
-                        {r.seededAcc}
-                      </td>
-                      <td className={`${TD} text-gray-500`}>
-                        {r.noSeedTools.toFixed(2)} → {r.seededTools.toFixed(2)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
+        <div className="mt-12">
           <div className="rounded-xl border border-gray-200 overflow-hidden">
             <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-200">
               <h3 className="text-sm font-semibold text-gray-900">

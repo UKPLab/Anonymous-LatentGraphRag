@@ -1,0 +1,144 @@
+import PrevNext from "@/components/Docs/PrevNext";
+
+export const metadata = {
+  title: "Knowledge Construction · LatentGraphRAG",
+  description: "Triples and propositions as memories with provenance: loading OpenIE and PropRAG output, extraction, and the MemoryInventory.",
+};
+
+# Knowledge construction
+
+LatentGraphRAG reuses the knowledge that graph-based retrievers construct: **triples** from open information
+extraction and **propositions**. It does not traverse a graph built from them. Each constructed unit becomes a
+*memory*: a short text plus the list of source documents it was extracted from (its provenance π). The memory
+tree searches the texts; the provenance maps memory scores back to documents.
+
+Constructed knowledge enters the package through `latentgraphrag.construction` and is held in a
+`MemoryInventory`.
+
+## Triples
+
+A triple is rendered literally as one sentence:
+
+```python
+from latentgraphrag import triples
+
+triples.render("Radio City", "located in", "India")
+# 'Radio City located in India.'
+```
+
+Whitespace is collapsed, a final period is appended if missing, and a triple that is empty after
+normalisation is skipped. Malformed triples (not three elements) are skipped when reading OpenIE records.
+
+### From an OpenIE file
+
+`triples.load_openie(path)` reads a HippoRAG-format OpenIE cache: the JSON form `{"docs": [...]}` or JSON
+lines, either optionally gzipped. Each record carries the chunk id `idx` and its `extracted_triples`.
+
+```python
+records = triples.load_openie("openie.jsonl.gz")
+tri = triples.from_openie(records, source_of=chunk_to_doc)
+```
+
+`source_of` maps a record's `idx` to the document id used by the document index. It can be a mapping or a
+callable; records it does not know are skipped. Without it, the `idx` itself is the document id.
+
+### Extraction with HippoRAG
+
+`triples.extract_with_hipporag` runs HippoRAG's OpenIE (named entities, then triples) over
+`{chunk id: passage}` against an OpenAI-compatible endpoint and returns records ready for `from_openie`.
+HippoRAG is MIT licensed; install it with the `construction` extra, or pass the `src` directory of a checkout
+as `hipporag_src`. HippoRAG caches its LLM calls in `save_dir`.
+
+```python
+records = triples.extract_with_hipporag(
+    passages,                         # {chunk id: passage text}
+    llm_name="Qwen/Qwen3-Next-80B-A3B-Instruct",   # the paper's model for FanOutQA and BrowseComp+
+    llm_base_url="http://localhost:8000/v1",
+    save_dir="openie_cache/",
+)
+tri = triples.from_openie(records, source_of=chunk_to_doc)
+```
+
+### Chunk ids
+
+The OpenIE caches key passages by `chunk_id(title, text)`, which is `"chunk-" + md5(title + "\n" + text)`.
+Use it to map cache records to your document ids:
+
+```python
+from latentgraphrag import chunk_id
+
+chunk_to_doc = {chunk_id(title, text): doc_id for doc_id, (title, text) in titled_passages.items()}
+```
+
+## Propositions
+
+A proposition is a self-contained statement extracted from one passage. The paper uses PropRAG's
+propositions.
+
+```python
+from latentgraphrag import propositions
+
+records = propositions.load_records("proprag_openie.json")   # {"docs": [...]} or JSON lines, gz ok
+pro = propositions.from_records(records, source_of=chunk_to_doc)
+```
+
+Each record carries `idx` and a list of `propositions` (strings, or objects with a `text` field). Empty
+propositions are skipped.
+
+### Extraction with PropRAG
+
+`propositions.extract_with_proprag` runs PropRAG's own extraction (entities, then propositions, with its
+prompts and output repair) from a local PropRAG checkout. PropRAG is not bundled, because its repository ships
+without a license file; this package calls it and does not copy its prompts.
+
+```python
+records = propositions.extract_with_proprag(
+    passages,                         # {chunk id: passage text}
+    llm_name="Qwen/Qwen3.5-27B",      # the paper's model for FanOutQA and BrowseComp+
+    llm_base_url="http://localhost:8000/v1",
+    save_dir="proprag_cache/",
+    proprag_root="path/to/PropRAG",   # root of the checkout
+)
+```
+
+## Memory inventories
+
+How an inventory is built from a corpus, saved and indexed is walked through step by step on
+[Index a corpus, save, reuse](/docs/indexing).
+
+
+`MemoryInventory` holds unique memory texts, their source ids and their kind (`"triple"` or
+`"proposition"`). A memory extracted from several documents has several sources.
+
+```python
+from latentgraphrag import MemoryInventory
+
+inventory = MemoryInventory.union(tri, pro)   # documents + triples + propositions
+inventory.select("triple")                    # documents + triples
+len(inventory), inventory.stats()
+```
+
+`union` keeps memories in order of first appearance and merges the provenance of a memory that occurs in
+several inputs. Triples and propositions in one inventory form one memory index, as in the paper's full
+configuration.
+
+| Method | Description |
+| --- | --- |
+| `MemoryInventory.from_links(links, kind)` | from `(memory text, source id)` pairs |
+| `MemoryInventory.from_map(mapping, kind)` | from `{memory text: source id or [source ids]}` |
+| `MemoryInventory.union(*inventories)` | one inventory over several, provenance merged |
+| `add(text, source, kind)` | add one link; a known memory gains the source |
+| `select(kind)` | the memories of one kind |
+| `stats()` | counts per kind and of covered source documents |
+| `source_map()` | `{memory position: [source ids]}`, the form the retriever uses |
+| `save_map(path)` / `load_map(path, kind)` | `{memory text: [source ids]}` as JSON, gzipped if the path ends in `.gz` |
+| `save_jsonl(path)` / `load_jsonl(path)` | one `{"text", "sources", "kind"}` record per line, keeps kinds |
+
+### Sources must be document ids
+
+The sources of an inventory must be the ids the document index uses: the keys of the `documents` passed to
+`LatentGraphRAG.build`, or, for a chunked corpus, the document ids given in `groups`. The projection uses
+the source ids as given, so ids that differ from the index's (for example chunk ids instead of document ids)
+put the memory view on different ids than the document view, and the two views no longer fuse.
+
+<PrevNext pathname="/docs/construction" />

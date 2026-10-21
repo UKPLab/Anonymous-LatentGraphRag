@@ -2,7 +2,12 @@
 
 import { motion } from "framer-motion";
 import Link from "next/link";
-import { Github, BookOpen, ListTree } from "lucide-react";
+import { Github, BookOpen, ListTree, ExternalLink } from "lucide-react";
+import { paperMeta } from "@/data/lgrPaper";
+import { claim } from "@/components/PaperTables/claims";
+import Figure1Chart from "./Figure1Chart";
+
+const [TITLE, SUBTITLE] = paperMeta.title.split(/:\s+/);
 
 // Author list withheld: this is an anonymous ACL ARR submission under review.
 
@@ -34,7 +39,7 @@ export default function Header() {
           transition={{ delay: 0.2, duration: 0.6 }}
           className="text-4xl md:text-5xl lg:text-6xl font-bold mb-4 text-gray-900"
         >
-          LatentGraphRAG
+          {TITLE}
         </motion.h1>
 
         <motion.h2
@@ -43,7 +48,7 @@ export default function Header() {
           transition={{ delay: 0.3, duration: 0.6 }}
           className="text-xl md:text-2xl lg:text-3xl text-gray-600 mb-8"
         >
-          Overcoming the Missing-Edge Problem in Knowledge Graphs with Recursive Dense Retrieval
+          {SUBTITLE}
         </motion.h2>
 
         {/* Authors */}
@@ -94,6 +99,36 @@ export default function Header() {
             <span className="font-medium text-blue-700">Traces</span>
           </Link>
 
+          {/* Backbone: the anonymous Recursive Dense Retrieval project page */}
+          <a
+            href="https://anonymous.4open.science/w/Recursive-Dense-Retrieval/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 hover:border-indigo-300 transition-all duration-200"
+          >
+            <ExternalLink className="w-5 h-5 text-indigo-700" />
+            <span className="font-medium text-indigo-700">RDR (backbone)</span>
+          </a>
+
+        </motion.div>
+
+        {/* Hero: Figure 1 of the paper */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.7, duration: 0.6 }}
+          className="mt-10 grid grid-cols-1 lg:grid-cols-5 gap-6 items-center text-left"
+        >
+          <div className="lg:col-span-2 space-y-3">
+            <p className="text-[11px] uppercase tracking-wider font-semibold text-blue-600">
+              Initial evidence changes answer quality and agent search
+            </p>
+            <p className="text-sm text-gray-700 leading-relaxed">{claim("doc-only-beats-graph")}</p>
+            <p className="text-sm text-gray-700 leading-relaxed">{claim("agent-search-reduction")}</p>
+          </div>
+          <div className="lg:col-span-3 bg-white rounded-2xl border border-gray-200 p-4">
+            <Figure1Chart />
+          </div>
         </motion.div>
 
         {/* Scroll indicator */}
@@ -101,7 +136,7 @@ export default function Header() {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.8, duration: 0.6 }}
-          className="mt-16"
+          className="mt-10"
         >
           <motion.div
             animate={{ y: [0, 8, 0] }}

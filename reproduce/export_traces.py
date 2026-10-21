@@ -1,59 +1,71 @@
-"""Export LatentGraphRAG evaluation trajectories into a deduplicated, shardable
-static-site payload.
+"""Export the trajectories behind the paper's agent tables into the static-site payload.
+
+Which runs are exported is fixed below (RUNS), one run per table cell: the read-only
+rows of Table 4, the matched ReAct rows of its lower block, and one of the repeated
+runs that Table 5 averages. BrowseComp+ is never exported: its authors ask that the
+benchmark not appear as plain text online.
+
+Scores are computed exactly as the paper computes them:
+  MuSiQue   BrowseComp grader verdict on the final answer (rejudge_bcgrader_final/,
+            position-matched to the run file, query ids checked)
+  FanOutQA  loose list recall on the answer text (field loose_final)
+  searches  in-loop tool calls; the seed is not a call
 
 Layout produced under OUT:
-  runs.json                          manifest + aggregate metrics per run
+  runs.json                          manifest + per-run metrics
   traces/<ds>/<run>/index.json       per-sample summary (cheap list view)
-  traces/<ds>/<run>/s<k>.json        full slim traces, SHARD samples each
-  corpus/<ds>/b<XX>.json             docid -> {t,d,x}, 256 buckets
+  traces/<ds>/<run>/s<k>.json        full traces, SHARD samples each
+  corpus/<ds>/b<XXX>.json            docid -> {t,d,x}, 256 buckets, referenced docs only
   gold/<ds>.json                     qid -> {g:[gold ids], e:[evidence ids]}
+
+Environment:
+  LGR_TRACES_ROOT    run files as copied from the evaluation suite: results_*/,
+                     rejudge_bcgrader_final/results_*/ and search_index/<ds>/docs.json
+  LGR_MUSIQUE_QA     MuSiQue questions with paragraph annotations (HippoRAG 2 release,
+                     reproduce/dataset/musique.json); gold = supporting paragraphs
+  LGR_FANOUTQA_GOLD  FanOutQA gold built from the benchmark's qrels ({qid: {g, e}})
+  LGR_EXPORT_OUT     output directory (default: website/public/data)
 """
-import json, os, re, glob, hashlib, collections, sys
+import collections
+import hashlib
+import json
+import os
+import re
 
-E = os.environ['LGR_ROOT']
-QR = os.environ.get('LGR_QRELS', os.path.join(os.environ['LGR_ROOT'], 'qrels'))
-OUT = os.environ.get('LGR_EXPORT_OUT', 'site_export')
+ROOT = os.environ['LGR_TRACES_ROOT']
+OUT = os.environ.get('LGR_EXPORT_OUT', 'website/public/data')
+MUSIQUE_QA = os.environ.get('LGR_MUSIQUE_QA')
+FANOUTQA_GOLD = os.environ.get('LGR_FANOUTQA_GOLD')
 SHARD = 100
-TRUNC = 2000
-READERS = ['qwen3_5_9b', 'qwen3_5_27b', 'qwen3_5_122b', 'gptoss120b']
-EXPECT = {'musique': 1000, 'browsecomp': 830, 'fanoutqa': 310}
+TRUNC = 2200            # seeds were shown at 2,200 characters, search results at 2,000
+EXPECT = {'musique': 1000, 'fanoutqa': 310}
+READER = 'qwen3_5_122b'
 
-# condition -> (table, human label). Anything unlisted still gets exported as "other".
-LOOP = {
-    'no_seed': 'No seed',
-    'qwen_seed': '+ Qwen3-Emb seed',
-    'reasonmcb_seed': '+ Reason-MCB seed',
-    'hipporag_seed': '+ HippoRAG 2 seed',
-    'latentgraph_dualtree_seed': '+ LatentGraphRAG (dual-tree)',
-    'latentgraph_singleview_seed': '+ LatentGraphRAG (single-view)',
-    'doc_only_seed': '+ Document-only seed',
-    'memory_only_seed': '+ Memory-only seed',
-    'hybrid_seed': '+ Hybrid seed',
-}
-READ = {
-    'closed_book': 'Closed-book (no evidence)',
-    'qwen_read': 'Qwen3-Embedding-8B',
-    'read_qwen_official': 'Qwen3-Embedding-8B',
-    'reasonmcb_read': 'Reason-ModernColBERT',
-    'read_reasonmcb_official': 'Reason-ModernColBERT',
-    'hipporag_read': 'HippoRAG 2',
-    'doc_only_read': 'Document-only',
-    'memory_only_read': 'Memory-only',
-    'dual_z_read': 'MMR-Tree + Z-Agreement',
-    'hybrid_union_read': 'Hybrid union',
-    'latentgraph_read': 'LatentGraphRAG',
-}
-BENCH = {
-    'benchmark': 'BrowseComp+ agent (Qwen3-Emb backend)',
-    'benchmark_qwen': 'BrowseComp+ agent (Qwen3-Emb backend)',
-    'benchmark_rmcb': 'BrowseComp+ agent (Reason-MCB backend)',
-}
-XRMCB = {
-    'benchmark_rmcb': 'no seed',
-    'benchmark_rmcb_dual_z_read': '+ LatentGraphRAG',
-    'benchmark_rmcb_hipporag_read': '+ HippoRAG 2',
-    'benchmark_rmcb_qwen_read': '+ Qwen3-Emb',
-}
+REACT = 'results_run2_rdr_force_mt8192_ctx64kfx_std_'
+READ = 'results_run2_rdr_readonly_v2_mt8192_ctx64kfx'
+
+# (table, dataset, run directory, condition, label as printed in the paper)
+T5 = [('no_seed', 'No seed'), ('hipporag_seed', 'HippoRAG 2'), ('greasoner_seed', 'G-Reasoner'),
+      ('hgrag_seed', 'HGRAG'), ('proprag_seed', 'PropRAG'), ('rdr_doc_seed', 'LGR (doc. only)')]
+T4 = [('no_seed', 'No evidence'), ('qwen_seed', 'Qwen3-Embedding-8B'), ('hipporag_seed', 'HippoRAG 2'),
+      ('greasoner_seed', 'G-Reasoner'), ('hgrag_seed', 'HGRAG'), ('proprag_seed', 'PropRAG'),
+      ('rdr_doc_seed', 'LGR (doc. only)')]
+LGR = 'LGR (doc. + tri. + prop.)'
+RUNS = (
+    [('table5', 'musique', REACT + 'p3R_m10', c, l) for c, l in T5]
+    + [('table5', 'musique', REACT + 'p3R_m10', 'rdr_lgrp3d1_seed', LGR)]
+    + [('table5', 'fanoutqa', REACT + 'p3S_m10', c, l) for c, l in T5]
+    + [('table5', 'fanoutqa', REACT + 'p3S_m10', 'rdr_lgrp3_seed', LGR)]
+    + [('table4_read', 'musique', READ + '_srvQ2', c, l) for c, l in T4]
+    + [('table4_read', 'musique', READ + '_srvQ2', 'rdr_lgrd1_seed', LGR)]
+    + [('table4_read', 'fanoutqa', READ, c, l) for c, l in T4]
+    + [('table4_read', 'fanoutqa', READ, 'rdr_lgr_seed', LGR)]
+    + [('table4_react', 'musique', REACT + 'srvQ2_m10', 'rdr_doc_seed', 'LGR (doc. only)'),
+       ('table4_react', 'musique', REACT + 'srvQ2_m10', 'rdr_lgrd1_seed', LGR),
+       ('table4_react', 'fanoutqa', REACT + 'm10', 'rdr_doc_seed', 'LGR (doc. only)'),
+       ('table4_react', 'fanoutqa', REACT + 'm10', 'rdr_lgr_seed', LGR)]
+)
+SHORT = {'table5': 't5', 'table4_read': 't4read', 'table4_react': 't4react'}
 
 
 def log(*a):
@@ -61,43 +73,26 @@ def log(*a):
 
 
 def jl(fp):
-    out = []
-    for line in open(fp):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            out.append(json.loads(line))
-        except Exception:
-            pass
-    return out
-
-
-# ---------------------------------------------------------------- id resolution
-BRACKET = re.compile(r'^\s*\[(\d+)\]\s*')
-LEADNUM = re.compile(r'^\s*(\d+)\s*\n')
-FRONT = re.compile(r'^---\n.*?\n---\n', re.S)
-
-
-def strip_front(t):
-    return FRONT.sub('', t, count=1)
+    with open(fp) as f:
+        return [json.loads(line) for line in f if line.strip()]
 
 
 def h(s):
     return hashlib.md5(s.encode('utf-8', 'ignore')).hexdigest()
 
 
+def norm(s):
+    """Whitespace/case-insensitive form, so re-wrapped or truncated copies of a
+    passage still resolve to the same corpus document."""
+    return ' '.join(s.split()).lower()
+
+
 DIGITS = re.compile(r'(\d+)\s*$')
 
 
 def bucket_of(docid):
-    """Which corpus shard a document lives in.
-
-    Deliberately computable from the id alone with no hashing, so the browser
-    can derive the file to fetch without shipping a hash implementation or a
-    docid -> bucket lookup table. All our ids end in digits ("18639",
-    "musique_000059"); the fallback only exists for safety.
-    """
+    """Corpus shard of a document. Computable from the id alone (the browser does the
+    same in lib/traces.ts bucketOf), so no lookup table is shipped."""
     m = DIGITS.search(docid)
     if m:
         return f'{int(m.group(1)) % 256:03d}'
@@ -107,489 +102,177 @@ def bucket_of(docid):
     return f'{acc % 256:03d}'
 
 
-def norm(s):
-    """Whitespace/case-insensitive form, so differing truncation or re-wrapping
-    between retrieval backends still resolves to the same corpus document."""
-    return ' '.join(s.split()).lower()
+class Corpus:
+    """The agent's search corpus: positional ids, plus text lookups for seed documents,
+    which are stored as rendered text rather than ids."""
 
-
-class Resolver:
-    """Maps a stored document string back to its corpus id.
-
-    Traces store documents in four shapes, none of them a clean id field:
-      "[63071] ---\ntitle: ..."   benchmark agent / rmcb
-      "49881\n---\ntitle: ..."    our loop's seed block
-      "---\ntitle: ...---\nbody"  plain corpus text
-      "Title\nbody"               title-first rendering, no frontmatter
-    """
-
-    def __init__(self, dataset):
-        self.ds = dataset
-        self.by_prefix = {}
-        self.by_body = {}
-        self.by_norm = {}
-        self.text = {}          # docid -> truncated text actually shown
-        self.meta = {}          # docid -> (title, date)
-        self.valid = set()
-        self.positional = dataset in ('musique', 'fanoutqa')
-        self.items = {}         # non-document items, id -> text
-        self.stats = collections.Counter()
-        self._load()
-
-    def _load(self):
-        if self.ds == 'browsecomp':
-            docs = json.load(open(f'{E}/search_index/browsecomp_full/docs.json'))
-            ids = json.load(open(f'{E}/search_index/browsecomp_full/docids.json'))
-        elif self.ds == 'musique':
-            docs = json.load(open(f'{E}/search_index/musique/docs.json'))
-            ids = [f'musique_{i:06d}' for i in range(len(docs))]
-        else:
-            docs = json.load(open(f'{E}/search_index/fanoutqa/docs.json'))
-            ids = [f'fanoutqa_{i:06d}' for i in range(len(docs))]
-        log(f'  corpus {self.ds}: {len(docs)} docs')
-        for i, t in enumerate(docs):
-            did = str(ids[i])
-            self.valid.add(did)
+    def __init__(self, ds):
+        self.ds = ds
+        self.docs = json.load(open(f'{ROOT}/search_index/{ds}/docs.json'))
+        self.by_prefix, self.by_norm = {}, {}
+        for i, t in enumerate(self.docs):
+            did = self.id(i)
             self.by_prefix.setdefault(h(t[:600]), did)
-            body = strip_front(t)
-            self.by_body.setdefault(h(body[:400]), did)
-            self.by_norm.setdefault(h(norm(body)[:300]), did)
-            m = re.search(r'^---\ntitle:\s*(.*?)\n', t)
-            title = m.group(1).strip() if m else t.split('\n', 1)[0][:200]
-            m = re.search(r'\ndate:\s*(.*?)\n', t[:400])
-            self.meta[did] = (title, m.group(1).strip() if m else '')
-            self.text[did] = t[:TRUNC]
-        del docs
-        log(f'  maps: prefix={len(self.by_prefix)} body={len(self.by_body)}')
+            self.by_norm.setdefault(h(norm(t)[:300]), did)
+        self.items = {}         # unmatched excerpts, id -> text
+        self.stats = collections.Counter()
+        log(f'  corpus {ds}: {len(self.docs)} documents')
 
-    def _from_num(self, n):
-        """Numeric ids appear either as real corpus docids (BrowseComp+) or as
-        positional indices into the index order (MuSiQue/FanOutQA)."""
-        if n in self.valid:
-            return n
-        if self.positional:
-            cand = f'{self.ds}_{int(n):06d}'
-            if cand in self.valid:
-                return cand
-        return None
+    def id(self, i):
+        return f'{self.ds}_{int(i):06d}'
 
-    def item_id(self, t):
-        """Id for a retrieved item that is not a corpus document.
+    def text(self, docid):
+        return self.docs[int(DIGITS.search(docid).group(1))]
 
-        Memory-only, HippoRAG and dual-tree seeds contain verbalized triplets
-        rather than passages, so they have no docid. They get a content-addressed
-        id whose digits let bucket_of() place them like any other item.
-        """
-        iid = 'm' + str(int(h(norm(t)[:400])[:12], 16))
+    def at(self, idx, shown):
+        """Id of a search result: the run records the index position; the text it
+        recorded is checked against the corpus before the id is trusted."""
+        did = self.id(idx)
+        if norm(self.docs[idx])[:300] == norm(shown)[:300]:
+            self.stats['search_by_index'] += 1
+            return did
+        self.stats['search_index_mismatch'] += 1
+        return self.resolve(shown)
+
+    def resolve(self, t):
+        did = self.by_prefix.get(h(t[:600]))
+        if did:
+            self.stats['by_prefix'] += 1
+            return did
+        did = self.by_norm.get(h(norm(t)[:300]))
+        if did:
+            self.stats['by_norm'] += 1
+            return did
+        # not a corpus passage at this granularity: shown verbatim, never guessed
+        self.stats['unmatched'] += 1
+        iid = 'u' + str(int(h(norm(t)[:400])[:12], 16))
         self.items[iid] = t[:TRUNC]
         return iid
 
-    def resolve(self, t):
-        m = BRACKET.match(t)
-        if m:
-            did = self._from_num(m.group(1))
-            if did:
-                self.stats['bracket'] += 1
-                return did
-        m = LEADNUM.match(t)
-        if m:
-            did = self._from_num(m.group(1))
-            if did:
-                self.stats['leadnum'] += 1
-                return did
-        # strip whatever id prefix was present, then hash
-        core = BRACKET.sub('', t)
-        core = LEADNUM.sub('', core)
-        did = self.by_prefix.get(h(core[:600]))
-        if did:
-            self.stats['prefix'] += 1
-            return did
-        body = strip_front(core)
-        did = self.by_body.get(h(body[:400]))
-        if did:
-            self.stats['body'] += 1
-            return did
-        did = self.by_norm.get(h(norm(body)[:300]))
-        if did:
-            self.stats['norm'] += 1
-            return did
-        self.stats['memory_item'] += 1
-        return self.item_id(core)
+
+def scores(ds, d, cond, rows):
+    """Per-row quality as the paper scores it, plus the grader's text."""
+    if ds == 'fanoutqa':
+        return [float(r['loose_final']) for r in rows], [None] * len(rows)
+    R = jl(f'{ROOT}/rejudge_bcgrader_final/{d}/res_{ds}_{cond}.jsonl')
+    assert len(R) == len(rows) and all(a['query_id'] == b['query_id'] for a, b in zip(R, rows)), \
+        f'grader file not aligned with {d}/{cond}'
+    return [float(bool(x.get('correct_bc'))) for x in R], [x.get('judge_bc') for x in R]
 
 
-# ---------------------------------------------------------------- gold labels
-def load_gold(dataset):
-    if dataset == 'browsecomp':
-        base = f'{QR}/topics-qrels'
-    elif dataset == 'fanoutqa':
-        base = f'{QR}/fanoutqa-topics-qrels'
-    else:
+def musique_gold(corpus):
+    """MuSiQue has no qrels; gold = the supporting paragraphs of each question."""
+    if not MUSIQUE_QA:
         return {}
-    out = collections.defaultdict(lambda: {'g': [], 'e': []})
-    for fn, key in [('qrel_golds.txt', 'g'), ('qrel_evidence.txt', 'e')]:
-        p = f'{base}/{fn}'
-        if not os.path.exists(p):
-            continue
-        for line in open(p):
-            parts = line.split()
-            if len(parts) >= 4:
-                out[parts[0]][key].append(parts[2])
-    return dict(out)
-
-
-# ---------------------------------------------------------------- judged join
-def load_judged():
-    """Correctness for most non-122B runs lives in compact {qid,c} sidecars
-    rather than inline in the trace file, so it has to be joined back in.
-
-    Two hazards, both observed in this dataset:
-      * degenerate sidecars where every verdict is False (a crashed judge pass)
-        would silently render a run as 0% accuracy, so they are dropped;
-      * the same run was often judged more than once and the 122B judge is not
-        bit-reproducible (1-4% of verdicts flip, ~1 accuracy point). The newest
-        pass wins and the spread is recorded so it can be reported rather than
-        hidden.
-    """
-    cands = collections.defaultdict(list)
-    for jd in ['results_bcfull_judged', 'results_papernums_judged']:
-        for fp in glob.glob(f'{E}/{jd}/*.jsonl'):
-            m = re.search(
-                r'results_([A-Za-z0-9_]+?)_res_(musique|browsecomp|fanoutqa)_(.+)\.jsonl',
-                os.path.basename(fp))
-            if not m:
+    out, miss = {}, 0
+    for q in json.load(open(MUSIQUE_QA)):
+        g = []
+        for p in q['paragraphs']:
+            if not p.get('is_supporting'):
                 continue
-            src, ds, cond = m.groups()
-            reader = 'qwen3_5_122b'
-            for r in READERS:
-                if cond.startswith(r + '_'):
-                    reader, cond = r, cond[len(r) + 1:]
-                    break
-            # sidecars use either 'qid' or 'q' for the query id
-            mapping = {str(x.get('qid', x.get('q'))): bool(x['c'])
-                       for x in jl(fp)
-                       if ('qid' in x or 'q' in x) and 'c' in x}
-            if not mapping:
-                continue
-            ncorr = sum(mapping.values())
-            if ncorr == 0 and len(mapping) > 50:
-                log(f'  ! dropping degenerate judge pass (0 correct of '
-                    f'{len(mapping)}): {os.path.basename(fp)[:70]}')
-                continue
-            cands[(ds, reader, cond)].append({
-                'map': mapping, 'official': src.startswith('bcfull'),
-                'mtime': os.path.getmtime(fp), 'file': os.path.basename(fp),
-                'acc': 100 * ncorr / len(mapping),
-            })
-    out, meta = {}, {}
-    for key, lst in cands.items():
-        ds = key[0]
-        if ds == 'browsecomp' and any(c['official'] for c in lst):
-            lst = [c for c in lst if c['official']]
-        lst.sort(key=lambda c: (-c['mtime'], c['file']))
-        best = lst[0]
-        out[key] = best['map']
-        meta[key] = {
-            'judge_passes': len(lst),
-            'acc_spread': round(max(c['acc'] for c in lst)
-                                - min(c['acc'] for c in lst), 2),
-            'judge_file': best['file'],
-        }
-    return out, meta
-
-
-# ---------------------------------------------------------------- run discovery
-def discover():
-    """Locate the best available file per (dataset, reader, condition).
-
-    Official-corpus BrowseComp+ files (results_bcfull_*) always win over the old
-    pooled index; otherwise the more complete file wins.
-    """
-    found = {}
-    for d in sorted(glob.glob(f'{E}/results_*')):
-        if not os.path.isdir(d):
-            continue
-        dn = os.path.basename(d)
-        official = dn.startswith('results_bcfull')
-        for fp in glob.glob(f'{d}/res_*.jsonl'):
-            m = re.match(r'res_(musique|browsecomp|fanoutqa)_(.+)\.jsonl',
-                         os.path.basename(fp))
-            if not m:
-                continue
-            ds, cond = m.groups()
-            reader = 'qwen3_5_122b'
-            for r in READERS:
-                if cond.startswith(r + '_'):
-                    reader, cond = r, cond[len(r) + 1:]
-                    break
-            n = sum(1 for _ in open(fp))
-            key = (ds, reader, cond)
-            old = found.get(key)
-            if old:
-                if ds == 'browsecomp' and old[2] and not official:
-                    continue
-                if not (ds == 'browsecomp' and official and not old[2]) and n < old[1]:
-                    continue
-            found[key] = (fp, n, official)
-    return found
-
-
-def classify(cond, reader):
-    if cond in XRMCB and cond != 'benchmark_rmcb':
-        return 'table16', XRMCB[cond]
-    if cond in BENCH:
-        # Only the 122B benchmark rows belong to the main table; the other
-        # readers are the cross-reader robustness story.
-        table = 'table3' if reader == 'qwen3_5_122b' else 'table15'
-        return table, BENCH[cond]
-    if cond in READ:
-        return 'table2', READ[cond]
-    if cond in LOOP:
-        return ('table3' if reader == 'qwen3_5_122b' else 'table15'), LOOP[cond]
-    return 'other', cond
-
-
-def export_seeds(ds, res, used):
-    """Release the retrieval seeds themselves.
-
-    Serves two purposes: it is the only faithful record of what the
-    retrieve-then-read rows actually saw, and it is the artifact needed to
-    reproduce the seeded runs without rebuilding any index.
-    """
-    out = []
-    for fp in sorted(glob.glob(f'{E}/bundles/{ds}/seed_*.jsonl')):
-        method = os.path.basename(fp)[len('seed_'):-len('.jsonl')]
-        rows = jl(fp)
-        recs = []
-        for r in rows:
-            ids = []
-            for t in (r.get('seed') or []):
-                if isinstance(t, dict):
-                    t = t.get('text') or ''
-                if isinstance(t, str) and t:
-                    did = res.resolve(t)
-                    ids.append(did)
-                    if did:
-                        used.add(did)
-            recs.append({'qid': str(r.get('query_id')),
-                         'q': r.get('question'),
-                         'gold_answer': r.get('answer'),
-                         'seed': ids})
-        d = f'{OUT}/seeds/{ds}'
-        os.makedirs(d, exist_ok=True)
-        json.dump(recs, open(f'{d}/{method}.json', 'w'), separators=(',', ':'))
-        nz = sum(1 for r in recs if r['seed'])
-        out.append({'dataset': ds, 'method': method, 'n': len(recs),
-                    'n_with_seed': nz,
-                    'mean_seed_docs': round(sum(len(r['seed']) for r in recs)
-                                            / max(1, len(recs)), 2)})
-        log(f'  seeds {method:24s} n={len(recs):5d} with_seed={nz:5d}')
+            did = corpus.by_norm.get(h(norm(f"{p['title']}\n{p['paragraph_text']}")[:300]))
+            if did:
+                g.append(did)
+            else:
+                miss += 1
+        # the release lists one question twice; its second occurrence is keyed <id>#2
+        out[q['id'] if q['id'] not in out else f"{q['id']}#2"] = {'g': g, 'e': []}
+    log(f'  gold musique: {len(out)} questions, {miss} supporting paragraphs not in the corpus')
     return out
 
 
-# ---------------------------------------------------------------- main
 def main():
-    only = sys.argv[1] if len(sys.argv) > 1 else None
-    keep_other = os.environ.get('KEEP_OTHER') == '1'
-    # GPT-OSS-120B does not reliably emit the benchmark scaffold's text markers
-    # (1.6 vs ~5-7 mean tool calls, many empty first turns), so its numbers do
-    # not measure retrieval. Excluded from the release by default.
-    exclude = {r for r in os.environ.get('EXCLUDE_READERS', 'gptoss120b').split(',') if r}
     os.makedirs(OUT, exist_ok=True)
-    found = discover()
-    judged, jmeta = load_judged()
-    log(f'discovered {len(found)} run files, {len(judged)} judged sidecars')
-
-    by_ds = collections.defaultdict(list)
-    for (ds, reader, cond), (fp, n, official) in found.items():
-        by_ds[ds].append((reader, cond, fp, n, official))
-
     manifest = []
-    allseeds = []
-    for ds in ['browsecomp', 'musique', 'fanoutqa']:
-        if only and ds != only:
-            continue
-        runs = by_ds.get(ds, [])
-        if not runs:
-            continue
-        log(f'=== {ds}: {len(runs)} runs')
-        res = Resolver(ds)
-        gold = load_gold(ds)
+    for ds in ('musique', 'fanoutqa'):
+        log(f'=== {ds}')
+        corpus = Corpus(ds)
         used = set()
-
-        for reader, cond, fp, n, official in sorted(runs):
-            if reader in exclude:
+        for table, dds, d, cond, label in RUNS:
+            if dds != ds:
                 continue
-            table, label = classify(cond, reader)
-            if table == 'other' and not keep_other:
-                continue
-            if table == 'table2':
-                # no trajectory and no seed_docs in these files; the seeds are
-                # exported from the bundles by export_seeds() instead
-                continue
-            jmap = judged.get((ds, reader, cond), {})
-            jmi = jmeta.get((ds, reader, cond), {})
-            run_id = f'{reader}__{cond}'
+            rows = jl(f'{ROOT}/{d}/res_{ds}_{cond}.jsonl')
+            assert len(rows) == EXPECT[ds], f'{d}/{cond}: {len(rows)} rows'
+            V, judge = scores(ds, d, cond, rows)
+            run_id = f'{SHORT[table]}__{cond}'
             rd = f'{OUT}/traces/{ds}/{run_id}'
             os.makedirs(rd, exist_ok=True)
-            rows = jl(fp)
-            # de-duplicate on query_id, keep first
-            seen = {}
-            for r in rows:
-                seen.setdefault(r.get('query_id'), r)
-            rows = list(seen.values())
-
-            index, shard, sk, ncorr, tools = [], [], 0, 0, []
-            looses = []
-            for i, r in enumerate(rows):
-                qid = str(r.get('query_id'))
-                seed_ids = []
-                for t in (r.get('seed_docs') or []):
-                    if isinstance(t, str):
-                        did = res.resolve(t)
-                        seed_ids.append(did)
-                        if did:
-                            used.add(did)
+            seen = collections.Counter()
+            index, shard, sk = [], [], 0
+            for r, v, jt in zip(rows, V, judge):
+                qid = str(r['query_id'])
+                seen[qid] += 1
+                key = qid if seen[qid] == 1 else f'{qid}#{seen[qid]}'   # MuSiQue repeats one question
+                seed = [corpus.resolve(t) for t in (r.get('seed_docs') or []) if isinstance(t, str)]
                 traj = []
-                for st in (r.get('trajectory') or []):
-                    if not isinstance(st, dict):
-                        continue
-                    ids = []
-                    for t in (st.get('retrieved') or []):
-                        if isinstance(t, str):
-                            did = res.resolve(t)
-                            ids.append(did)
-                            if did:
-                                used.add(did)
-                    traj.append({
-                        'i': st.get('step'),
-                        'act': st.get('action'),
-                        'txt': st.get('assistant'),
-                        'q': st.get('search_query'),
-                        'ret': ids,
-                    })
-                loose = r.get('loose')
-                if isinstance(loose, (int, float)):
-                    # FanOutQA is scored by loose list-recall, not an LLM judge
-                    correct = None
-                elif 'correct' in r:
-                    correct = bool(r.get('correct'))
-                elif qid in jmap:
-                    correct = bool(jmap[qid])
-                else:
-                    correct = None      # unjudged: distinct from "wrong"
-                tc = r.get('tool_calls')
-                if isinstance(tc, int):
-                    tools.append(tc)
-                if correct:
-                    ncorr += 1
-                if isinstance(loose, (int, float)):
-                    looses.append(float(loose))
-                rec = {
-                    'qid': qid,
-                    'q': r.get('question'),
-                    'gold_answer': r.get('gold_answer') or r.get('answer'),
-                    'answer': r.get('final_answer'),
-                    'correct': correct,
-                    'loose': loose if isinstance(loose, (int, float)) else None,
-                    'tools': tc,
-                    'judge': r.get('judge_output'),
-                    'tok_in': r.get('agent_tokens_in'),
-                    'tok_out': r.get('agent_tokens_out'),
-                    'seed': seed_ids,
-                    'traj': traj,
-                }
-                shard.append(rec)
-                index.append({'qid': qid, 'c': correct, 't': tc,
+                for st in r.get('trajectory') or []:
+                    ret = [corpus.at(i, t) for t, i in zip(st.get('retrieved') or [], st.get('top1000_idx') or [])]
+                    step = {'i': int(st['step']) if str(st.get('step', '')).isdigit() else None,
+                            'act': st.get('action'), 'txt': st.get('assistant'),
+                            'q': st.get('search_query'), 'ret': ret}
+                    if st.get('fx'):
+                        step['fx'] = st['fx']
+                    if st.get('gen_error'):
+                        step['err'] = st['gen_error']
+                    traj.append(step)
+                    used.update(ret)
+                used.update(seed)
+                loose = v if ds == 'fanoutqa' else None
+                correct = None if ds == 'fanoutqa' else bool(v)
+                shard.append({'qid': key, 'q': r.get('question'), 'gold_answer': r.get('gold_answer'),
+                              'answer': r.get('final_answer'), 'correct': correct, 'loose': loose,
+                              'tools': r.get('tool_calls'), 'judge': jt,
+                              'tok_in': r.get('agent_tokens_in'), 'tok_out': r.get('agent_tokens_out'),
+                              'seed': seed, 'traj': traj})
+                index.append({'qid': key, 'c': correct, 't': r.get('tool_calls'),
                               'q': (r.get('question') or '')[:180], 's': sk,
-                              'l': (round(float(loose), 3)
-                                    if isinstance(loose, (int, float)) else None)})
+                              'l': round(loose, 3) if loose is not None else None})
                 if len(shard) >= SHARD:
-                    json.dump(shard, open(f'{rd}/s{sk}.json', 'w'),
-                              separators=(',', ':'))
+                    json.dump(shard, open(f'{rd}/s{sk}.json', 'w'), separators=(',', ':'))
                     shard, sk = [], sk + 1
             if shard:
-                json.dump(shard, open(f'{rd}/s{sk}.json', 'w'),
-                          separators=(',', ':'))
+                json.dump(shard, open(f'{rd}/s{sk}.json', 'w'), separators=(',', ':'))
                 sk += 1
             json.dump(index, open(f'{rd}/index.json', 'w'), separators=(',', ':'))
-            nn = len(rows)
-            inline = sum(1 for r in rows if 'correct' in r)
-            if looses and len(looses) >= 0.9 * max(1, nn):
-                acc_source, cov = 'loose', 1.0
-            elif inline == nn and nn:
-                acc_source, cov = 'inline', 1.0
-            elif jmap:
-                acc_source = 'sidecar' if not inline else 'mixed'
-                cov = round(sum(1 for r in rows
-                                if str(r.get('query_id')) in jmap) / max(1, nn), 3)
-            else:
-                acc_source, cov = 'MISSING', 0.0
+            n = len(rows)
             manifest.append({
-                'run_id': run_id, 'table': table, 'label': label,
-                'acc_source': acc_source, 'judged_coverage': cov,
-                'judge_passes': jmi.get('judge_passes'),
-                'acc_spread': jmi.get('acc_spread'),
-                'dataset': ds, 'reader': reader, 'condition': cond,
-                'n': nn, 'expected': EXPECT.get(ds, nn),
-                'complete': nn >= 0.9 * EXPECT.get(ds, nn),
-                'official_corpus': bool(official) if ds == 'browsecomp' else True,
-                # No judgements available means unknown, not zero — never let an
-                # unjudged run render as 0% accuracy.
-                'metric': 'loose_list_recall' if acc_source == 'loose' else 'llm_judge',
-                'acc': (round(100 * sum(looses) / len(looses), 1) if acc_source == 'loose'
-                        else round(100 * ncorr / nn, 1)
-                        if nn and acc_source != 'MISSING' else None),
-                'unjudged': acc_source == 'MISSING',
-                'mean_tools': round(sum(tools) / len(tools), 2) if tools else None,
+                'run_id': run_id, 'table': table, 'label': label, 'dataset': ds, 'reader': READER,
+                'condition': cond, 'mode': 'read' if table == 'table4_read' else 'react',
+                'n': n, 'expected': EXPECT[ds], 'complete': n == EXPECT[ds], 'official_corpus': True,
+                'acc': round(100 * sum(V) / n, 2),
+                'mean_tools': round(sum(int(r['tool_calls']) for r in rows) / n, 2),
                 'shards': sk,
+                'acc_source': 'loose' if ds == 'fanoutqa' else 'inline', 'judged_coverage': 1.0,
+                'judge_passes': 1, 'acc_spread': None,
+                'metric': 'loose_list_recall' if ds == 'fanoutqa' else 'llm_judge',
+                'source_dir': d,
             })
-            log(f'  {run_id:52s} {table:8s} n={nn:5d} acc={manifest[-1]["acc"]} '
-                f'tools={manifest[-1]["mean_tools"]} shards={sk}')
+            log(f'  {table:12s} {run_id:26s} acc={manifest[-1]["acc"]:6.2f} '
+                f'searches={manifest[-1]["mean_tools"]:.2f} shards={sk}')
 
-        seedinfo = export_seeds(ds, res, used)
-        allseeds.extend(seedinfo)
-
-        # corpus buckets: only documents actually referenced
-        cd = f'{OUT}/corpus/{ds}'
-        os.makedirs(cd, exist_ok=True)
         buckets = collections.defaultdict(dict)
         for did in used:
-            title, date = res.meta.get(did, ('', ''))
-            buckets[bucket_of(did)][did] = {'t': title, 'd': date,
-                                            'x': res.text.get(did, '')}
-        # non-document items (verbalized memories) live in the same buckets, so
-        # the viewer resolves any id through one code path
-        nitems = 0
-        for iid, text in res.items.items():
-            if iid in used:
-                buckets[bucket_of(iid)][iid] = {'t': 'Relational memory',
-                                                'd': '', 'x': text,
-                                                'kind': 'memory'}
-                nitems += 1
+            if did in corpus.items:
+                t = corpus.items[did]
+                buckets[bucket_of(did)][did] = {'t': t.split('\n', 1)[0][:200], 'd': '', 'x': t,
+                                                'kind': 'unmatched'}
+                continue
+            t = corpus.text(did)
+            title = t.split('\n', 1)[0][:200]
+            buckets[bucket_of(did)][did] = {'t': title, 'd': '', 'x': t[:TRUNC]}
+        os.makedirs(f'{OUT}/corpus/{ds}', exist_ok=True)
         for b, obj in buckets.items():
-            json.dump(obj, open(f'{cd}/b{b}.json', 'w'), separators=(',', ':'))
-        log(f'  non-document items: {nitems}')
-        log(f'  corpus: {len(used)} referenced docs in {len(buckets)} buckets')
-        log(f'  id resolution: {dict(res.stats)}')
+            json.dump(obj, open(f'{OUT}/corpus/{ds}/b{b}.json', 'w'), separators=(',', ':'))
+        log(f'  corpus: {len(used)} referenced items in {len(buckets)} buckets; ids: {dict(corpus.stats)}')
 
+        gold = musique_gold(corpus) if ds == 'musique' else (
+            json.load(open(FANOUTQA_GOLD)) if FANOUTQA_GOLD else {})
         if gold:
             os.makedirs(f'{OUT}/gold', exist_ok=True)
-            json.dump(gold, open(f'{OUT}/gold/{ds}.json', 'w'),
-                      separators=(',', ':'))
-            log(f'  gold: {len(gold)} queries')
-        del res
-
-    mp = f'{OUT}/runs.json'
-    prev = json.load(open(mp)) if os.path.exists(mp) else []
-    keep = [r for r in prev if r['dataset'] not in {m['dataset'] for m in manifest}]
-    json.dump(keep + manifest, open(mp, 'w'), indent=1)
-    log(f'wrote {mp}: {len(keep) + len(manifest)} runs')
-    sp = f'{OUT}/seeds.json'
-    prevs = json.load(open(sp)) if os.path.exists(sp) else []
-    keeps = [r for r in prevs
-             if r['dataset'] not in {x['dataset'] for x in allseeds}]
-    json.dump(keeps + allseeds, open(sp, 'w'), indent=1)
-    log(f'wrote {sp}: {len(keeps) + len(allseeds)} seed sets')
+            json.dump(gold, open(f'{OUT}/gold/{ds}.json', 'w'), separators=(',', ':'))
+    json.dump(manifest, open(f'{OUT}/runs.json', 'w'), indent=1)
+    json.dump([], open(f'{OUT}/seeds.json', 'w'))
+    log(f'wrote {OUT}/runs.json: {len(manifest)} runs')
     log('EXPORT_DONE')
 
 

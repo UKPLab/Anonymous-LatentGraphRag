@@ -1,5 +1,5 @@
 1:"$Sreact.fragment"
-2:I[57121,[],""]
-3:I[74581,[],""]
-:HL["/w/Anonymous-LatenGraphRag-57C9/_next/static/css/75a26be54294104e.css","style"]
-0:{"buildId":"7Vne1zmL52DgbQEqxE3By","rsc":["$","$1","c",{"children":[[["$","link","0",{"rel":"stylesheet","href":"/w/Anonymous-LatenGraphRag-57C9/_next/static/css/75a26be54294104e.css","precedence":"next"}]],["$","html",null,{"lang":"en","children":["$","body",null,{"className":"__variable_586474 __variable_2ecb9f antialiased","children":["$","$L2",null,{"parallelRouterKey":"children","template":["$","$L3",null,{}]}]}]}]]}],"loading":null,"isPartial":false}
+2:I[5644,[],""]
+3:I[8234,[],""]
+:HL["/w/Anonymous-LatenGraphRag-57C9/_next/static/css/a7b20e4e69504355.css","style"]
+0:{"buildId":"Y-DpuDL-9IzlXU9K8B03v","rsc":["$","$1","c",{"children":[[["$","link","0",{"rel":"stylesheet","href":"/w/Anonymous-LatenGraphRag-57C9/_next/static/css/a7b20e4e69504355.css","precedence":"next"}]],["$","html",null,{"lang":"en","children":["$","body",null,{"className":"__variable_c34e69 __variable_3f1993 antialiased","children":["$","$L2",null,{"parallelRouterKey":"children","template":["$","$L3",null,{}]}]}]}]]}],"loading":null,"isPartial":false}

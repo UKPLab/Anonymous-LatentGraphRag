@@ -203,8 +203,8 @@ function MissingEdgePanel({ phase }: { phase: Phase }) {
 
       <div className="mt-3 bg-red-50 rounded-lg px-3 py-2 border border-red-100">
         <p className="text-[11px] text-red-700 leading-relaxed">
-          <strong>Information loss:</strong> Any relation not explicitly encoded as an edge is
-          permanently inaccessible, no matter how relevant it may be.
+          <strong>Route lost:</strong> a relation that extraction did not keep cannot be
+          traversed, even though the source passage still states it.
         </p>
       </div>
     </motion.div>
@@ -396,8 +396,8 @@ function MissingNodePanel({ phase }: { phase: Phase }) {
 
       <div className="mt-3 bg-red-50 rounded-lg px-3 py-2 border border-red-100">
         <p className="text-[11px] text-red-700 leading-relaxed">
-          <strong>Entire subgraph lost:</strong> If an entity was not extracted during graph
-          construction, all knowledge connected to it vanishes permanently.
+          <strong>Subgraph lost:</strong> if an entity was never extracted, every relation
+          attached to it disappears from the graph, though not from the documents.
         </p>
       </div>
     </motion.div>
@@ -438,12 +438,13 @@ export default function StaticGraphProblemSection() {
             Motivation
           </div>
           <h2 className="text-xl md:text-2xl lg:text-3xl font-bold text-gray-900 mb-3">
-            The Problem with Static Knowledge Graphs
+            Graph Pipelines Depend on What Extraction Kept
           </h2>
           <p className="text-gray-600 max-w-2xl mx-auto text-sm leading-relaxed">
-            Traditional KG-based retrieval encodes knowledge as{" "}
-            <strong className="text-red-600">fixed, static edges</strong> between entities.
-            Two critical failure modes make this brittle in practice.
+            Graph-based retrieval constructs facts and their connections{" "}
+            <strong className="text-red-600">before a question arrives</strong>, then retrieves
+            through that structure. Extraction can miss relations, removing graph routes even when
+            the source text retains the evidence.
           </p>
         </motion.div>
 
@@ -462,14 +463,15 @@ export default function StaticGraphProblemSection() {
           className="bg-amber-50 border border-amber-200 rounded-2xl px-6 py-4 text-center max-w-3xl mx-auto"
         >
           <p className="text-sm text-amber-800 leading-relaxed">
-            <span className="font-bold">Key takeaway:</span> Static graphs are brittle. Any
-            omission during construction is permanent. We need a retrieval approach that{" "}
+            <span className="font-bold">The other paradigm:</span> recursive dense retrieval{" "}
             <span className="font-semibold text-amber-700">
-              creates connections dynamically, on the fly, based on context.
+              conditions each lookup on observed text
             </span>
+            , discovering evidence paths as search unfolds. LatentGraphRAG keeps the constructed
+            facts, but as evidence for recursive search, linked to the passages they came from.
           </p>
           <p className="text-xs text-amber-600 mt-2">
-            ↓ &nbsp;This is exactly what Latent Graph RAG does.
+            ↓ &nbsp;First, the recursive backbone.
           </p>
         </motion.div>
       </div>

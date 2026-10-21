@@ -4,168 +4,118 @@
 > Author names, affiliations, logos and personal links have been removed from this
 > repository and from the project site for anonymous review.
 
-> Rethinking graph-based multi-hop retrieval through recursive dense retrieval over documents and verbalized relational memories.
+**LatentGraphRAG: Composing Constructed Knowledge at Test Time with Recursive Dense Retrieval**
 
-LatentGraphRAG is a decomposition-free retrieval framework that treats graph-derived information not as fixed traversal edges but as retrievable textual *relational memories*. It applies recursive dense retrieval to **documents**, **memories**, or **both**, and unifies them through a small set of orthogonal axes.
+Project page: https://anonymous.4open.science/w/Anonymous-LatenGraphRag-57C9/
 
-## The three orthogonal axes
+Retrieval backbone, Recursive Dense Retrieval (RDR, anonymous submission): https://anonymous.4open.science/w/Recursive-Dense-Retrieval/
 
-Every retrieval decision factors into three independent choices:
+LatentGraphRAG reuses knowledge constructed for graph-based retrieval — triples and propositions — without
+traversing a fixed graph. Two recursive searches run side by side: a **document tree** over the source
+passages and a **memory tree** over the constructed units. Each unit keeps a link to the passage it was
+extracted from, so the memory readout is projected back onto documents and fused with the document readout
+into one source-document ranking. The ranking can be read directly or used as the initial evidence of a
+ReAct agent.
 
-| Axis           | Values                                                           |
-|----------------|------------------------------------------------------------------|
-| **corpus**     | `document_only` \| `memory_only` \| `joint_index` \| `dual_tree` |
-| **search**     | `full_expansion` \| `beamdr` \| `cross_view_beam` \| `mmr` \| `single_hop` |
-| **fusion**     | `rrf` \| `agreement` (only valid for `dual_tree`)                |
+## What comes from RDR, and what this package adds
+
+Recursive Dense Retrieval (RDR) supplies the encoder, the recursive update (each query state encodes the
+question together with the units observed so far) and the global readout over all search states.
+LatentGraphRAG uses them unchanged and adds:
+
+| Component | Module |
+|---|---|
+| Knowledge construction: triples rendered literally as `"head relation tail."`, propositions, inventories with provenance | `latentgraphrag.construction`, `latentgraphrag.inventory` |
+| The memory tree's search: RDR's tree with maximal-marginal-relevance selection | `latentgraphrag.retrieval.MMRTreeSearch` |
+| Projection of memory scores to their source documents, and view fusion | `latentgraphrag.retrieval.project`, `fuse` |
+| The retriever over documents, memories and a joint index | `latentgraphrag.LatentGraphRAG` |
+| Retrieval-first seeding of a ReAct agent, search tools | `latentgraphrag.agent` |
+| Retrieve-then-read reader, BrowseComp grader, list recall, recall@k | `latentgraphrag.evaluation` |
+
+## Installation
+
+LatentGraphRAG depends on RDR. Download RDR from its anonymous repository,
+https://anonymous.4open.science/r/Recursive-Dense-Retrieval, and install both:
+
+```bash
+pip install -e ./Recursive-Dense-Retrieval        # RDR
+pip install -e ".[agent]"                          # LatentGraphRAG, with the ReAct agent's dependencies
+pip install -e ".[construction]"                   # optional: HippoRAG's OpenIE for extracting triples
+```
 
 ## Quick start
 
-```bash
-pip install latentgraphrag[faiss-cpu,gritlm,openai]
-```
-
 ```python
-import latentgraphrag as lgr
+from latentgraphrag import LatentGraphRAG, MemoryInventory, PAPER, triples, propositions
 
-rag = lgr.LatentGraphRAG(
-    encoder="GritHopper-7B",
-    openie_llm="gpt-4o-mini",
-)
+# 1. Constructed knowledge with provenance: triples from a HippoRAG-format OpenIE cache, propositions from
+#    PropRAG's output, one inventory over both. Sources are document ids of the corpus below.
+tri = triples.from_openie(triples.load_openie("openie.jsonl.gz"), source_of=chunk_to_doc)
+pro = propositions.from_records(propositions.load_records("proprag_openie.json"), source_of=chunk_to_doc)
+inventory = MemoryInventory.union(tri, pro)
 
-rag.build_graph(
-    documents=["doc 1 text...", "doc 2 text..."],
-    save_dir="./my_corpus",
-)
+# 2. Two recursive trees on an RDR checkpoint, fused at the source (the paper's configuration).
+lgr = LatentGraphRAG("path/to/rdr-checkpoint", config=PAPER)
+index = lgr.build(documents, inventory)            # documents: {doc id: text}
+index.save("lgr_index")                            # encoded once; later: index = lgr.load_index("lgr_index")
+result = lgr.search([question], index, k=10)[0]
+result.ranking                                     # [(doc id, score), ...], best first
 
-# Paper's "MMR-Tree + Z-Agreement" (best mean R@5 and R@10 across all datasets):
-results = rag.retrieve(
-    queries=["Where does X live?"],
-    corpus="dual_tree",
-    search="full_expansion",   # document tree: full expansion
-    search_memory="mmr",       # memory tree: MMR-decoded expansion
-    fusion="agreement",        # Z-Agreement fusion (z_normalize=True by default)
-    branching_doc=3,
-    branching_memory=5,
-    max_hops=4,
-    k=10,
-)
+# 3. The ranking as initial evidence of a ReAct agent, graded as in the paper.
+from latentgraphrag import ReActAgent, Seed, OpenAIChatModel, BrowseCompGrader, DenseSearchTool
+llm = OpenAIChatModel(model="Qwen/Qwen3.5-122B-A10B", base_url="http://localhost:8000/v1")
+search_tool = DenseSearchTool(embeddings, texts, ids)   # the agent's own search index
+agent = ReActAgent(llm, search_tool)
+trajectory = agent.run(question, Seed.from_ranking(result.ids, documents))
+verdict = BrowseCompGrader(llm).grade(question, trajectory.output, gold_answer)   # reads the final answer line
 ```
 
-## Results
+## The paper's configuration
 
-All numbers are Recall@5 / Recall@10, over the same HippoRAG-style extracted triplets so
-that only the access interface varies (paper Table 1):
+`latentgraphrag.PAPER` holds every setting behind the paper's LatentGraphRAG rows:
+- **Trees:** two trees of depth 4 with three children per state. The memory tree selects children by maximal marginal relevance (λ = 0.5).
+- **Readout:** RDR's global readout over each tree with K = 200 and τ = 0.02 (RDR's default τ is 0.05).
+- **Projection:** memory scores go to documents by the maximum over the memories a document supplied.
+- **Fusion:** CombMNZ, with weight 1 for the document view and 0.5 for the memory view.
 
-| Method | MuSiQue | BrowseComp+ | FanOutQA | Mean |
-|---|---|---|---|---|
-| Qwen3-Embedding-8B (single-hop) | 62.10 / 69.92 | 14.60 / 20.30 | 20.76 / 28.55 | 32.49 / 39.59 |
-| HippoRAG 2 (graph traversal) | 74.47 / 81.94 | 8.12 / 12.83 | 26.07 / 36.86 | 36.22 / 43.88 |
-| Document-only, full tree | 79.73 / 87.73 | **21.18** / **28.87** | 22.40 / 29.24 | 41.10 / 48.61 |
-| Memory-only, full expansion | 76.15 / 84.40 | 9.28 / 13.19 | 31.45 / 44.14 | 38.96 / 47.24 |
-| Joint index, full tree | 76.14 / 84.05 | 16.62 / 27.61 | 30.52 / 40.66 | 41.09 / 50.77 |
-| Dual-tree + RRF | 79.64 / 89.49 | 16.31 / 25.65 | 27.85 / 38.82 | 41.27 / 51.32 |
-| **MMR-Tree + Z-Agreement** | **82.12** / **90.02** | 18.62 / 25.94 | **33.22** / **46.83** | **44.65** / **54.26** |
+`LatentGraphRAG.search(..., view=...)` selects the views of the paper's ablations:
+- `"D+M"` — the paper's configuration.
+- `"D"` — documents only.
+- `"M"` — the memory tree alone.
+- `"J"` — documents and memories in one index.
+- `"D+J"` — documents fused with the joint index.
 
-Retrieving verbalized triplets beats traversing the same graph on all three benchmarks.
-The two views are complementary rather than redundant: documents are strongest on noisy
-web-scale retrieval, memories on breadth-oriented collection, and per-query calibrated
-fusion attains the best mean Recall.
+The view fusion is `PAPER.with_(fusion=...)`, one of `combmnz`, `combsum`, `z`, `rrf` or `max`. The projection is `PAPER.with_(projection=...)`, one of `max`, `sum`, `mean`, `pmax2`, `pmax4` or `noisy_or`.
 
-### It also makes agents cheaper
+## Reproduction
 
-Injected as a one-shot seed into a fixed ReAct loop (reader Qwen3.5-122B), a
-LatentGraphRAG ranking raises mean answer accuracy from 42.9 to 49.2 while cutting the
-searches the agent issues itself from 2.30 to 0.86 per question — a **2.7x reduction**.
-Every avoided tool call is one fewer LLM invocation over an ever-growing cached context.
-The effect holds across readers from 9B to 122B and also when the agent's own live
-retriever is already a strong late-interaction model.
-
-## Trajectories and reproduction
-
-Every downstream number is released in full, not sampled:
-
-* **[`reproduce/`](reproduce)** — the released trajectories, the retrieval seeds, the
-  evaluation harness as it was run, and a README explaining how to re-run any cell.
-* **[`website/`](website)** — the project site, including a trajectory viewer that shows,
-  for all 74,678 released trajectories: the injected seed with its ranked documents and
-  their gold labels, every reasoning step and search the agent issued with what that
-  search returned, the final answer, and the judge's verdict.
+The paper's retrieval numbers were produced by a research evaluator that re-implements RDR.
+`tests/parity` runs that evaluator and this package side by side on a synthetic corpus with a deterministic
+fake encoder, and requires identical rankings for every view, fusion operator and projection, on flat and
+chunked corpora. Only the encoder's weights are not exercised by that test. See [reproduce/](reproduce/)
+for the trace export behind the project page's trajectory viewer.
 
 ```bash
-cd website && npm install && npm run dev     # then open /traces
+pytest tests                                          # unit tests, agent and evaluation tests
+LGR_EVALUATOR=/path/to/evaluator.py pytest tests/parity
 ```
 
-The site is also published for review at
-[anonymous.4open.science/w/Anonymous-LatenGraphRag-57C9](https://anonymous.4open.science/w/Anonymous-LatenGraphRag-57C9/)
-— the trajectory viewer is under
-[`/traces`](https://anonymous.4open.science/w/Anonymous-LatenGraphRag-57C9/traces/).
+## Third-party code
+
+Triples are extracted with HippoRAG's OpenIE (MIT license) when `[construction]` is installed. Propositions
+are extracted by calling PropRAG from a local checkout (`propositions.extract_with_proprag`); PropRAG is
+not bundled, since its repository ships without a license file.
 
 ## Citation
 
 ```bibtex
-@inproceedings{anonymous2026latentgraphrag,
-  title     = {LatentGraphRAG: Overcoming the Missing-Edge Problem in Knowledge Graphs with Recursive Dense Retrieval},
-  author    = {Anonymous ACL Submission},
-  booktitle = {Under review},
-  year      = {2026},
+@misc{anonymous2026latentgraphrag,
+  title  = {LatentGraphRAG: Composing Constructed Knowledge at Test Time with Recursive Dense Retrieval},
+  author = {Anonymous},
+  note   = {Under review},
 }
 ```
 
 ## License
 
 Apache 2.0
-
-## Using a local LLM (vLLM / Qwen3) for graph construction
-
-Graph construction (OpenIE triple extraction and verbalization) can be done with any
-OpenAI-compatible endpoint, including a local vLLM server. This avoids cloud API costs
-and works fully offline.
-
-**Start a vLLM server:**
-
-```bash
-pip install latentgraphrag[faiss-cpu,gritlm,vllm]
-python -m vllm.entrypoints.openai.api_server \
-    --model Qwen/Qwen3-8B \
-    --served-model-name qwen3
-```
-
-**Point LatentGraphRAG at it:**
-
-```python
-import latentgraphrag as lgr
-
-rag = lgr.LatentGraphRAG(
-    encoder="GritHopper-7B",
-    openie_llm="qwen3",                      # model name served by vLLM
-    config=lgr.LatentGraphRAGConfig(
-        openai_base_url="http://localhost:8000/v1",
-        openai_api_key="EMPTY",              # vLLM does not require a real key
-    ),
-)
-```
-
-Qwen3's native thinking mode is disabled automatically when used as an OpenIE extractor
-(extraction is a structured task, not a reasoning task). Swap `Qwen/Qwen3-8B` for any
-other vLLM-served model to taste.
-
-## Batched / parallel retrieval
-
-For large evaluation runs (hundreds of queries), use `batched=True` to pool all query
-frontiers into a single encoder call per hop instead of one call per query:
-
-```python
-results = rag.retrieve(
-    queries=["Q1", "Q2", ..., "Q300"],
-    corpus="dual_tree",
-    search="full_expansion",
-    fusion="agreement",
-    batched=True,           # hop-synchronous batching — same results, faster
-    encode_chunk_size=64,   # optional: cap the batch size per encoder call
-    k=10,
-)
-```
-
-`batched=True` is mathematically equivalent to the default sequential mode — same
-context construction, same branch selection, same deduplication — but reduces
-encoder calls from `N_queries × N_hops` down to `N_hops` mega-batched calls.

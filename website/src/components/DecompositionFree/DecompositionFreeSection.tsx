@@ -1,367 +1,254 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { motion, useInView, AnimatePresence } from "framer-motion";
-import VectorCloud from "../Animation/VectorCloud";
-import GritHopperBlock from "../Animation/GritHopperBlock";
-import ContextBadges from "../Animation/ContextBadges";
-import BranchingTree from "../TreeSearch/BranchingTree";
+/**
+ * The backbone: one recursion, three views, one clock.
+ *
+ *   chain  the RDR operator animation: the state is encoded, its embedding scores a fixed index of
+ *          documents or memories, the best unit x_k is appended, and the strokes of earlier hops
+ *          stay so a small net builds up
+ *   tree   the same recursion as a search tree: hop k = level k of the highlighted path; the last
+ *          hop ends in the global readout
+ *   net    the same lookups as similarity edges over text units: the latent graph of the recursion
+ *
+ * A master clock drives all three and the encode/retrieve/update row: hop k is the same moment in
+ * every view, and everything hop k produces carries HOP[k − 1] (lgrPalette) in every view; the
+ * state and query stay indigo. One set of controls (play/pause, hop chips that seek, replay) serves
+ * the whole section; the chips double as its legend. No hyperparameter is quoted here.
+ */
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { claim } from "@/components/PaperTables/claims";
+import { HOP, LGR } from "@/components/lgrPalette";
+import RecursionLogo from "@/components/viz/RecursionLogo";
+import RecursionGlyph from "@/components/viz/RecursionGlyph";
+import PathTree, { type Phase } from "@/components/viz/PathTree";
+import MiniLoop from "@/components/viz/MiniLoop";
+import Formula from "@/components/viz/Formula";
 import LatentGraphSimilarityPanel from "../Animation/LatentGraphSimilarityPanel";
-import { useAnimationPhase } from "@/hooks/useAnimationPhase";
 
-const HOP_TARGETS = [
-  { x: 0.3, y: 0.45 },
-  { x: 0.65, y: 0.55 },
-  { x: 0.4, y: 0.7 },
-  { x: 0.7, y: 0.35 },
+/** Abstract: "Document-only recursive retrieval with RDR outperforms all evaluated graph pipelines on the three benchmarks; …" */
+const DOC_ONLY_CLAIM = claim("doc-only-beats-graph").split(";")[0].replace("with RDR ", "with RDR-8B ") + ".";
+
+/* ------------------------------------------------------------------ the master clock */
+
+type Step = { hop: number; phase: Phase; ms: number };
+const STEPS: Step[] = [];
+for (let h = 1; h <= 4; h++) {
+  STEPS.push({ hop: h, phase: "encode", ms: 1300 });
+  STEPS.push({ hop: h, phase: "retrieve", ms: 1900 });
+  STEPS.push(h < 4 ? { hop: h, phase: "update", ms: 1500 } : { hop: h, phase: "readout", ms: 3600 });
+}
+const REC = STEPS.reduce((a, s) => a + s.ms, 0);            // one recursion
+const startOf = (hop: number, phase: Phase) => {
+  let t = 0;
+  for (const s of STEPS) { if (s.hop === hop && s.phase === phase) return t; t += s.ms; }
+  return 0;
+};
+const PHASE_T0: Record<Phase, number> = { encode: 0, retrieve: 1 / 3, update: 2 / 3, readout: 2 / 3 };
+
+const OPS = [
+  { name: "Encode", eq: "s = [ι; q; O_s]", note: "the state, as text" },
+  { name: "Retrieve", eq: "ℓ_s(x) = cos(f_θ(s), e_x)", note: "against a fixed index" },
+  { name: "Update", eq: "s ⊕ x", note: "append the retrieved unit" },
 ];
+const SUBS = "₁₂₃₄";
 
-export default function DecompositionFreeSection() {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const cloudRef = useRef<HTMLDivElement>(null);
-  const isInView = useInView(containerRef, { margin: "-5% 0px -5% 0px" });
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [cloudDimensions, setCloudDimensions] = useState({ width: 500, height: 220 });
-
-  const { currentHop, phase, progress, isComplete, reset } = useAnimationPhase(
-    isPlaying,
-    4
-  );
+function useMasterClock(box: React.RefObject<HTMLDivElement | null>) {
+  const [total, setTotal] = useState(0);                     // ms since the first recursion started
+  const [paused, setPaused] = useState(false);
+  const [onScreen, setOnScreen] = useState(false);
+  const [reduced, setReduced] = useState(false);
+  const totalRef = useRef(0);
+  totalRef.current = total;
+  const [epoch, setEpoch] = useState(0);
 
   useEffect(() => {
-    if (cloudRef.current) {
-      const rect = cloudRef.current.getBoundingClientRect();
-      setCloudDimensions({ width: rect.width, height: rect.height });
+    // ?bb=<ms> freezes the section at that point of a recursion (screenshot checks)
+    const fz = new URLSearchParams(window.location.search).get("bb");
+    if (fz) { const id = requestAnimationFrame(() => { setTotal(Number(fz)); setPaused(true); }); return () => cancelAnimationFrame(id); }
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      const id = requestAnimationFrame(() => { setReduced(true); setTotal(startOf(4, "readout") + 1800); });
+      return () => cancelAnimationFrame(id);
     }
+    if (!box.current) return;
+    const io = new IntersectionObserver((es) => setOnScreen(es.some((e) => e.isIntersecting)), { threshold: 0.15 });
+    io.observe(box.current);
+    return () => io.disconnect();
+  }, [box]);
+
+  useEffect(() => {
+    if (paused || reduced || !onScreen) return;
+    let raf = 0;
+    const start = performance.now() - totalRef.current;
+    const loop = (now: number) => { setTotal(Math.max(0, now - start)); raf = requestAnimationFrame(loop); };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [paused, reduced, onScreen, epoch]);
+
+  const seek = useCallback((ms: number) => {
+    const rec = Math.floor(totalRef.current / REC);
+    setTotal(rec * REC + ms);
+    totalRef.current = rec * REC + ms;
+    setPaused(false);
+    setEpoch((e) => e + 1);
   }, []);
 
-  useEffect(() => {
-    if (isInView && !isPlaying && !isComplete) {
-      const timer = setTimeout(() => setIsPlaying(true), 300);
-      return () => clearTimeout(timer);
+  return { total, paused, setPaused, reduced, seek };
+}
+
+/* ------------------------------------------------------------------ the section */
+
+export default function DecompositionFreeSection() {
+  const box = useRef<HTMLDivElement | null>(null);
+  const { total, paused, setPaused, reduced, seek } = useMasterClock(box);
+
+  const rec = Math.floor(total / REC);
+  const el = total - rec * REC;
+  const { step, p } = useMemo(() => {
+    let acc = 0;
+    for (const s of STEPS) {
+      if (el < acc + s.ms) return { step: s, p: (el - acc) / s.ms };
+      acc += s.ms;
     }
-  }, [isInView, isPlaying, isComplete]);
+    return { step: STEPS[STEPS.length - 1], p: 0.999 };
+  }, [el]);
+  const { hop, phase } = step;
+  const hc = HOP[hop - 1];
+  // the chain glyph keeps its own time base: one cycle per hop, thirds for the phases
+  const cycle = rec * 4 + (hop - 1);
+  const t = Math.min(0.9999, PHASE_T0[phase] + p / 3);
+  const opActive = phase === "encode" ? 0 : phase === "retrieve" ? 1 : 2;
 
-  const visibleDocs = Math.min(currentHop + (phase === "context-updating" && currentHop < 3 ? 1 : 0), 3);
-
-  const handleReplay = () => {
-    reset();
-    setTimeout(() => setIsPlaying(true), 150);
-  };
-
-  const showInputToModel = phase === "processing";
-  const showVectorOutput = phase === "vector-traveling" || phase === "cloud-searching";
-  const showDocumentReturn = phase === "document-returning" && currentHop < 3;
-
-  const currentTarget = HOP_TARGETS[currentHop % 4];
-  const docStartX = currentTarget.x * cloudDimensions.width;
-  const docStartY = currentTarget.y * cloudDimensions.height;
-
-  const tensorValues = [
-    [0.8, 0.3, 0.9, 0.2, 0.7, 0.5, 0.4, 0.6, 0.85, 0.35, 0.65, 0.45],
-    [0.6, 0.7, 0.4, 0.8, 0.3, 0.9, 0.5, 0.2, 0.75, 0.55, 0.25, 0.95],
-    [0.4, 0.5, 0.7, 0.6, 0.8, 0.3, 0.9, 0.4, 0.65, 0.85, 0.45, 0.35],
-    [0.9, 0.4, 0.5, 0.7, 0.2, 0.8, 0.6, 0.3, 0.55, 0.75, 0.95, 0.25],
-  ];
-  const currentTensor = tensorValues[currentHop % 4];
+  const caption = (() => {
+    const xs = Array.from({ length: hop - 1 }, (_, i) => `x${SUBS[i]}`).join("; ");
+    const state = `[ι; q${xs ? "; " + xs : ""}]`;
+    switch (phase) {
+      case "encode": return `encode the state ${state}, as text.`;
+      case "retrieve": return hop < 4
+        ? "the state scores the index: similarity strokes in the chain, the scan in the tree and dashed edges in the net."
+        : "the last state scores the index; its best unit x₄ is scored, not appended.";
+      case "update": return `x${SUBS[hop - 1]} is appended to the state; the tree's path grows to level ${hop + 1}; x${SUBS[hop - 1]} is observed in the net.`;
+      default: return "every state's scores aggregate into one ranked list; the net shows every hop's edges at once.";
+    }
+  })();
 
   return (
-    <section ref={containerRef} className="py-6 px-4 md:px-6 lg:px-8 bg-gray-50/50">
-      <div className="max-w-7xl mx-auto">
-        {/* Transition from problem */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
-          className="text-center mb-4 max-w-3xl mx-auto"
-        >
-          <p className="text-sm text-gray-600 bg-blue-50 rounded-lg p-3 border border-blue-100">
-            <span className="font-semibold text-blue-700">LatentGraphRAG builds on GRITHopper</span>{" "}
-            <span className="text-gray-500">(Erker et al., 2026)</span>, the current
-            state-of-the-art model for multi-hop dense retrieval, which iteratively refines
-            a context-aware query representation without decomposing the question.
-          </p>
-        </motion.div>
+    <section className="border-t border-slate-200 bg-white px-4 py-10">
+      <div className="mx-auto max-w-6xl">
+        <div className="flex items-center gap-3">
+          <RecursionLogo size={46} />
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-indigo-600">The backbone</p>
+            <h2 className="text-xl font-semibold leading-snug text-slate-900 md:text-2xl">Recursive Dense Retrieval</h2>
+            <p className="text-[13.5px] text-slate-500">
+              One operator predicts the next search state over documents or memories (RDR; Anonymous, 2026).
+            </p>
+          </div>
+        </div>
+        <p className="mt-3 inline-block rounded-lg border border-indigo-200 bg-indigo-50/70 px-3.5 py-2 text-[14px] font-medium leading-relaxed text-indigo-900">
+          {DOC_ONLY_CLAIM}
+        </p>
 
-        {/* Section header */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
-          className="text-center mb-6"
-        >
-          <h2 className="text-xl md:text-2xl lg:text-3xl font-bold text-gray-900 mb-2">
-            Multi-Hop Dense Retrieval with GRITHopper
-          </h2>
-          <p className="text-gray-600 max-w-3xl mx-auto text-xs md:text-sm">
-            At each hop, GRITHopper jointly encodes the query with all retrieved documents so far
-            into a single context-aware dense vector. This vector is used to search the entire
-            index via dot-product, retrieving the next most relevant document.
-            Over multiple hops, this naturally forms a <em>tree of retrieval paths</em> over
-            documents, which LatentGraphRAG then extends to knowledge graph memories as well.
-          </p>
-        </motion.div>
-
-        {/* Two columns: Animation (left) + Branching Tree (right) */}
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-
-          {/* LEFT: GritHopper Animation */}
-          <div className="bg-white rounded-2xl border border-gray-100 p-4 md:p-5">
-            <h3 className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
-              <div className="w-2 h-2 bg-blue-500 rounded-full" />
-              Recursive Retrieval Loop
-            </h3>
-
-            {/* Row 1: Context + Arrow + GritHopper */}
-            <div className="grid grid-cols-[150px_auto_1fr] gap-4 items-start mb-4">
-              <div>
-                <div className="text-xs text-gray-500 font-medium flex items-center gap-1.5 mb-2">
-                  <div className="w-4 h-4 bg-blue-500 rounded-full flex items-center justify-center text-white text-[10px] font-bold">1</div>
-                  <span>{currentHop === 0 ? "Input" : "Expanding Context"}</span>
-                </div>
-                <ContextBadges currentHop={visibleDocs} isComplete={isComplete} maxDocs={3} />
-              </div>
-
-              {/* Arrow */}
-              <div className="flex flex-col items-center justify-center pt-10">
-                <div className="relative h-8">
-                  <AnimatePresence>
-                    {showInputToModel && (
-                      <>
-                        {[0, 1, 2].map((i) => (
-                          <motion.div
-                            key={`flow-${i}`}
-                            initial={{ opacity: 0, x: -15, scale: 1 }}
-                            animate={{
-                              opacity: [0, 1, 1, 0],
-                              x: [-15, 0, 20, 40],
-                              scale: [1, 0.7, 0.4, 0.2],
-                            }}
-                            transition={{
-                              duration: 0.7,
-                              delay: i * 0.15,
-                              repeat: Infinity,
-                              repeatDelay: 0.2,
-                            }}
-                            className="absolute top-1/2 -translate-y-1/2 w-2.5 h-2.5 bg-blue-400 rounded-sm"
-                          />
-                        ))}
-                      </>
-                    )}
-                  </AnimatePresence>
-                  <svg className="w-12 h-6 text-blue-400" viewBox="0 0 48 24" fill="none" stroke="currentColor">
-                    <path d="M 4 12 L 38 12 M 38 12 L 30 6 M 38 12 L 30 18" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </div>
-                <span className="text-[10px] text-gray-400 mt-1">encode</span>
-              </div>
-
-              {/* GritHopper Block */}
-              <div>
-                <div className="text-xs text-gray-500 font-medium flex items-center gap-1.5 mb-2">
-                  <div className="w-4 h-4 bg-purple-500 rounded-full flex items-center justify-center text-white text-[10px] font-bold">2</div>
-                  Encoding
-                </div>
-                <GritHopperBlock phase={phase} progress={progress} />
-
-                {/* Tensor visualization */}
-                <div className="mt-3 flex flex-col items-center h-[70px]">
-                  <div className="flex flex-col items-center min-h-[45px]">
-                    <AnimatePresence>
-                      {(showVectorOutput || phase === "processing") && (
-                        <motion.div
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: phase === "processing" ? progress * 0.7 : 1 }}
-                          exit={{ opacity: 0 }}
-                          className="flex flex-col items-center"
-                        >
-                          <div className="flex gap-0.5 mb-1">
-                            {currentTensor.map((val, i) => (
-                              <motion.div
-                                key={i}
-                                initial={{ scaleY: 0 }}
-                                animate={{ scaleY: 1 }}
-                                transition={{ delay: i * 0.03 }}
-                                className="w-2 rounded-sm"
-                                style={{
-                                  height: `${12 + val * 16}px`,
-                                  backgroundColor: `hsl(${220 + val * 60}, 75%, ${45 + val * 20}%)`,
-                                }}
-                              />
-                            ))}
-                          </div>
-                          <span className="text-[9px] text-gray-400">Dense Vector</span>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </div>
-                  <motion.div
-                    animate={{ opacity: showVectorOutput ? 1 : 0.3 }}
-                    className="text-indigo-400"
-                  >
-                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
-                    </svg>
-                  </motion.div>
-                </div>
-              </div>
-            </div>
-
-            {/* Row 2: Embedding Space */}
-            <div className="relative">
-              <div className="text-xs text-gray-500 font-medium flex items-center gap-1.5 mb-2">
-                <div className="w-4 h-4 bg-indigo-500 rounded-full flex items-center justify-center text-white text-[10px] font-bold">3</div>
-                Search Embedding Space
-              </div>
-              <div ref={cloudRef} className="h-[200px] relative">
-                <VectorCloud
-                  phase={phase}
-                  currentHop={currentHop}
-                  progress={progress}
-                  onDocumentStart={() => {}}
-                  entryFromTop={true}
-                  entryXPosition={0.65}
-                />
-                <AnimatePresence>
-                  {(phase === "cloud-searching" && progress > 0.6) && (
-                    <motion.div
-                      initial={{ opacity: 0, scale: 0.8 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      exit={{ opacity: 0 }}
-                      className="absolute top-3 right-3 bg-green-500 text-white text-xs px-2.5 py-1 rounded-full font-medium shadow-lg z-20"
-                    >
-                      D{currentHop + 1} found!
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-
-                <AnimatePresence>
-                  {showDocumentReturn && (
-                    <motion.div
-                      className="absolute z-20 pointer-events-none"
-                      style={{ left: docStartX - 14, top: docStartY - 14 }}
-                      initial={{ opacity: 1, scale: 1 }}
-                      animate={{
-                        opacity: progress < 0.95 ? 1 : 0,
-                        scale: progress < 0.95 ? 1 : 0.5,
-                        x: progress * (-docStartX - 30),
-                        y: progress * (-docStartY - 250),
-                      }}
-                      transition={{ duration: 0.05, ease: "linear" }}
-                    >
-                      <motion.div
-                        animate={{ rotate: [-8, 8, -8] }}
-                        transition={{ duration: 0.2, repeat: Infinity }}
-                        className="bg-green-500 rounded-lg p-2 shadow-lg shadow-green-500/40"
-                      >
-                        <svg className="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
-                        </svg>
-                      </motion.div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-            </div>
-
-            {/* Hop progress */}
-            <div className="mt-4 flex items-center justify-center gap-2">
-              {[1, 2, 3, 4].map((hop) => (
-                <motion.div
-                  key={hop}
-                  animate={{
-                    backgroundColor: currentHop >= hop - 1
-                      ? (currentHop === hop - 1 && !isComplete ? "#3b82f6" : "#22c55e")
-                      : "#e5e7eb",
-                    scale: currentHop === hop - 1 && !isComplete ? 1.1 : 1,
-                  }}
-                  className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold"
-                  style={{ color: currentHop >= hop - 1 ? "#fff" : "#9ca3af" }}
-                >
-                  {hop}
-                </motion.div>
-              ))}
-              <span className="ml-2 text-xs text-gray-500 font-medium">
-                {isComplete ? "Complete!" : `Hop ${currentHop + 1}/4`}
-              </span>
-              {isComplete && (
-                <motion.button
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  onClick={handleReplay}
-                  className="ml-2 px-3 py-1.5 bg-blue-500 hover:bg-blue-600 text-white font-medium rounded-lg text-xs flex items-center gap-1"
-                >
-                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                  </svg>
-                  Replay
-                </motion.button>
+        <div ref={box} className="mt-4 rounded-2xl border border-slate-200 bg-white p-3 sm:p-4">
+          {/* one set of controls for the three views; the hop chips are also the section's legend */}
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" onClick={() => setPaused(!paused)} aria-label={paused || reduced ? "Play" : "Pause"} disabled={reduced}
+              className="inline-flex h-[26px] w-[26px] items-center justify-center rounded-md border border-slate-300 bg-white text-slate-600 transition-colors hover:border-indigo-300 hover:text-indigo-700 disabled:opacity-40">
+              {paused || reduced ? (
+                <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2.2 1.2 L8.6 5 L2.2 8.8 Z" fill="currentColor" /></svg>
+              ) : (
+                <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect x="1.5" y="1" width="2.4" height="8" rx="0.6" fill="currentColor" /><rect x="6.1" y="1" width="2.4" height="8" rx="0.6" fill="currentColor" /></svg>
               )}
+            </button>
+            {HOP.map((hp, i) => {
+              const on = hop === i + 1;
+              const past = hop > i + 1;
+              return (
+                <button type="button" key={hp.name} onClick={() => seek(startOf(i + 1, "encode"))} disabled={reduced}
+                  title={i < 3 ? `Jump to hop ${i + 1}` : "Jump to the last hop and the readout"}
+                  className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[11.5px] font-medium transition-colors disabled:cursor-default"
+                  style={{ borderColor: on ? hp.c : past ? hp.c + "66" : LGR.line, background: on ? hp.soft : "#fff", color: on || past ? hp.ink : "#94a3b8" }}>
+                  <i className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: hp.c, opacity: on || past ? 1 : 0.45 }} />
+                  {i < 3 ? <>hop {i + 1} · <span className="italic">x{SUBS[i]}</span></> : <>hop 4 · readout</>}
+                </button>
+              );
+            })}
+            <span className="inline-flex items-center gap-1.5 px-1 text-[11.5px] text-slate-500">
+              <i className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: LGR.state }} />state / query
+            </span>
+            <button type="button" onClick={() => seek(0)} disabled={reduced}
+              className="ml-auto rounded-md border border-slate-200 px-2.5 py-1 text-[11px] text-slate-600 hover:border-slate-300 hover:bg-slate-50 disabled:opacity-40">
+              Replay
+            </button>
+          </div>
+
+          {/* chain (left) and tree (right) */}
+          <div className="mt-2 grid gap-4 lg:grid-cols-[minmax(0,1fr)_330px] lg:items-center">
+            <div className="min-w-0 overflow-x-auto">
+              <div className="sm:min-w-[520px]">
+                <RecursionGlyph t={t} cycle={cycle} />
+              </div>
+            </div>
+            <div className="mx-auto w-full min-w-0 max-w-[380px] border-slate-100 lg:border-l lg:pl-4">
+              <PathTree hop={hop} phase={phase} p={p} />
             </div>
           </div>
 
-          {/* RIGHT: Branching Tree Visualization */}
-          <div className="bg-white rounded-2xl border border-gray-100 p-4 md:p-5 flex flex-col">
-            <h3 className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
-              <div className="w-2 h-2 bg-blue-500 rounded-full" />
-              Tree Search over Documents
-            </h3>
-            <p className="text-xs text-gray-500 mb-4">
-              At each hop, the model expands <em>b</em> = 2 candidates. The blue path shows
-              the expanding context, synchronized with the animation on the left.
-            </p>
-            <div className="h-[390px]">
-              <BranchingTree
-                mode="documents"
-                branchingFactor={2}
-                maxDepth={4}
-                currentHop={isComplete ? 4 : currentHop}
-              />
-            </div>
-            {/* Info box */}
-            <div className="mt-3 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2.5">
-              <p className="text-[10px] text-blue-800 leading-relaxed">
-                <span className="font-bold">One path vs. many paths.</span>{" "}
-                The Recursive Retrieval Loop (left) and Similarity-Driven Connections (below)
-                each trace a <em>single</em> retrieval chain. We can also expand{" "}
-                <em>b</em> = 2 branches at every hop, building a tree search of candidate paths.
+          {/* the operator's three steps, highlighted in the current phase */}
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-slate-100 pt-2">
+            <MiniLoop active={opActive} />
+            <ol className="order-3 grid w-full min-w-0 grid-cols-3 gap-1.5 sm:order-none sm:w-auto sm:flex-1 sm:gap-2">
+              {OPS.map((st, i) => {
+                const on = i === opActive;
+                return (
+                  <li key={st.name} className={`min-w-0 rounded-lg border px-2 py-1.5 transition-colors duration-200 sm:px-3 ${
+                    on ? "border-indigo-300 bg-indigo-50/70" : "border-slate-200 bg-white"}`}>
+                    <div className="flex flex-wrap items-baseline gap-x-2">
+                      <span className={`text-[10.5px] font-semibold uppercase tracking-wide ${on ? "text-indigo-600" : "text-slate-400"}`}>
+                        {i + 1} · {i === 2 && phase === "readout" ? "Readout" : st.name}
+                      </span>
+                      <Formula tex={st.eq} className={`hidden text-[13.5px] sm:inline ${on ? "text-indigo-800" : "text-slate-600"}`} />
+                    </div>
+                    <div className={`text-[11.5px] ${on ? "text-slate-700" : "text-slate-400"}`}>
+                      {i === 2 && phase === "readout" ? "last hop: scored, not appended" : st.note}
+                    </div>
+                  </li>
+                );
+              })}
+            </ol>
+            <span className="ml-auto whitespace-nowrap rounded-md border px-2 py-1 text-[11.5px] font-semibold tabular-nums sm:ml-0"
+              style={{ borderColor: hc.c, color: hc.ink, background: hc.soft }}>
+              hop {hop} / 4
+            </span>
+          </div>
+
+          {/* the net: the same lookups as similarity edges over text units */}
+          <div className="mt-3 border-t border-slate-100 pt-3">
+            <div className="mb-1 flex flex-wrap items-baseline gap-x-3">
+              <h3 className="text-[15px] font-semibold text-slate-900">Similarity-driven connections</h3>
+              <p className="text-[12.5px] text-slate-500">
+                the same hops as edges over text units; scores are recomputed after every observation, so a
+                query-conditioned graph forms in the index. Hover a unit.
               </p>
             </div>
+            <LatentGraphSimilarityPanel hop={hop} phase={phase} p={p} />
           </div>
-        </div>
 
-        {/* Row 3: Latent Graph Similarity Panel */}
-        <div className="bg-white rounded-2xl border border-gray-100 p-4 md:p-5">
-          <LatentGraphSimilarityPanel
-            currentHop={currentHop}
-            isComplete={isComplete}
-            phase={phase}
-          />
-        </div>
-
-        {/* Transition: bridge into KG integration */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
-          className="text-center mt-8 max-w-2xl mx-auto bg-blue-50 border border-blue-200 rounded-2xl p-5"
-        >
-          <p className="text-sm text-blue-800 font-medium leading-relaxed">
-            This tree search works over documents. We can make retrieval even stronger by
-            running the same search over a second index: verbalized knowledge from knowledge graphs.
+          <p className="mt-1 min-h-[1.5em] text-[12.5px] leading-relaxed text-slate-600">
+            <span className="font-semibold" style={{ color: hc.ink }}>
+              {phase === "readout" ? "Hop 4 · readout" : `Hop ${hop} · ${phase}`}
+            </span>{" · "}
+            {caption}
           </p>
-          <div className="mt-4 flex flex-col items-center">
-            <motion.div
-              animate={{ y: [0, 6, 0] }}
-              transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut" }}
-              className="text-blue-400"
-            >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 5v14M19 12l-7 7-7-7" />
-              </svg>
-            </motion.div>
-          </div>
-        </motion.div>
+        </div>
+
+        <p className="mx-auto mt-5 max-w-3xl text-center text-[14px] leading-relaxed text-slate-700">
+          Any text can be observed: documents, and the{" "}
+          <span className="font-medium" style={{ color: LGR.triple }}>triples</span> and{" "}
+          <span className="font-medium" style={{ color: LGR.prop }}>propositions</span> constructed from
+          them. Constructed knowledge therefore composes through the same embedder.
+          <span aria-hidden="true" className="ml-1 text-slate-400">↓</span>
+        </p>
       </div>
     </section>
   );

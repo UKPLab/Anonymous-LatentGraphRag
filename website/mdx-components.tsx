@@ -12,24 +12,33 @@ import InlineCode from "@/components/Docs/InlineCode";
  */
 export function useMDXComponents(components: MDXComponents): MDXComponents {
   return {
-    h1: ({ children }) => (
-      <h1 className="text-3xl md:text-4xl font-bold text-gray-900 tracking-tight mt-2 mb-6">
+    // Keep the ids rehype-slug assigns, so /docs/page#section links resolve in the static HTML.
+    h1: ({ children, id }) => (
+      <h1 id={id} className="text-3xl md:text-4xl font-bold text-gray-900 tracking-tight mt-2 mb-6 scroll-mt-20">
         {children}
       </h1>
     ),
-    h2: ({ children }) => (
-      <h2 className="text-2xl font-bold text-gray-900 tracking-tight mt-12 mb-4 pb-2 border-b border-gray-200">
+    h2: ({ children, id }) => (
+      <h2 id={id} className="text-2xl font-bold text-gray-900 tracking-tight mt-12 mb-4 pb-2 border-b border-gray-200 scroll-mt-20">
         {children}
       </h2>
     ),
-    h3: ({ children }) => (
-      <h3 className="text-lg font-bold text-gray-900 mt-8 mb-3">{children}</h3>
+    h3: ({ children, id }) => (
+      <h3 id={id} className="text-lg font-bold text-gray-900 mt-8 mb-3 scroll-mt-20">{children}</h3>
     ),
     p: ({ children }) => (
       <p className="text-gray-700 leading-7 my-4">{children}</p>
     ),
-    a: ({ href, children }) => {
+    a: ({ href, children, className }) => {
       const target = href ?? "#";
+      // rehype-autolink-headings wraps every heading's text in a self-link; keep the heading's look.
+      if (typeof className === "string" && className.includes("heading-anchor")) {
+        return (
+          <a href={target} className="text-inherit no-underline hover:underline underline-offset-4">
+            {children}
+          </a>
+        );
+      }
       const external = /^https?:\/\//.test(target);
       if (external) {
         return (

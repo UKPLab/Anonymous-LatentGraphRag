@@ -9,13 +9,12 @@ export type LandingSection = { id: string; label: string };
 export const LANDING_SECTIONS: LandingSection[] = [
   { id: "overview", label: "Overview" },
   { id: "problem", label: "Problem" },
-  { id: "retrieval", label: "Retrieval" },
+  { id: "backbone", label: "RDR Backbone" },
   { id: "memories", label: "Memories" },
-  { id: "dual-tree", label: "Dual Tree" },
-  { id: "results", label: "Results" },
-  { id: "agentic", label: "Agentic RAG" },
+  { id: "fusion", label: "Two Trees" },
+  { id: "results", label: "Retrieval" },
+  { id: "robustness", label: "Robustness" },
+  { id: "agents", label: "Readers & Agents" },
   { id: "ablations", label: "Ablations" },
-  { id: "solution", label: "Solution" },
-  { id: "upper-bound", label: "Upper Bound" },
   { id: "citation", label: "Citation" },
 ];

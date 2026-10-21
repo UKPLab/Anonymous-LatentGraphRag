@@ -1,16 +1,16 @@
 import Header from "@/components/Header/Header";
 import TopNav from "@/components/Docs/TopNav";
 import SectionNav from "@/components/Landing/SectionNav";
-import PerformanceBarChart from "@/components/Charts/PerformanceBarChart";
 import StaticGraphProblemSection from "@/components/StaticGraphProblem/StaticGraphProblemSection";
 import DecompositionFreeSection from "@/components/DecompositionFree/DecompositionFreeSection";
 import KnowledgeGraphAnimation from "@/components/KnowledgeGraph/KnowledgeGraphAnimation";
 import UnifiedDualTreeSection from "@/components/DualTree/UnifiedDualTreeSection";
 import AgenticRagSection from "@/components/Agentic/AgenticRagSection";
 import AblationResults from "@/components/Ablation/AblationResults";
-import GroundTruthTripletSection from "@/components/GroundTruth/GroundTruthTripletSection";
-import LatentSolutionSection from "@/components/LatentSolution/LatentSolutionSection";
 import BibtexSection from "@/components/Citation/BibtexSection";
+import RetrievalResultsSection from "@/components/Results/RetrievalResultsSection";
+import RemovalSection from "@/components/Results/RemovalSection";
+import { paperMeta } from "@/data/lgrPaper";
 
 export default function Home() {
   return (
@@ -32,57 +32,45 @@ export default function Home() {
         <Header />
       </div>
 
-      {/* Row 1: Problem motivation — static KGs have missing edges and missing nodes */}
+      {/* Row 1: Problem: graph pipelines depend on what extraction kept */}
       <div id="problem" className="scroll-mt-24">
         <StaticGraphProblemSection />
       </div>
 
-      {/* Row 2: GRITHopper — state-of-the-art multi-hop dense retriever, tree over documents
-                 Now includes the Latent Graph Similarity Panel showing continuous dot-product
-                 connections over all documents at each hop */}
-      <div id="retrieval" className="scroll-mt-24">
+      {/* Row 2: Backbone: Recursive Dense Retrieval (encoder, recursive update, readout) */}
+      <div id="backbone" className="scroll-mt-24">
         <DecompositionFreeSection />
       </div>
 
-      {/* Row 3: Incorporating knowledge graphs — verbalize edges as searchable memories */}
+      {/* Row 3: Constructed knowledge: literal triples and propositions with source links */}
       <div id="memories" className="scroll-mt-24">
         <KnowledgeGraphAnimation />
       </div>
 
-      {/* Row 4: Dual tree search + document-memory agreement over both indices */}
-      <div id="dual-tree" className="scroll-mt-24">
+      {/* Row 4: Document tree + memory tree, projection to sources, CombMNZ */}
+      <div id="fusion" className="scroll-mt-24">
         <UnifiedDualTreeSection />
       </div>
 
-      {/* Row 5: Results — quantitative comparison against all baselines
-                 Placed after the full method explanation so readers understand
-                 what each number means */}
+      {/* Row 5: RQ1/RQ2: Table 1 and Table 2 */}
       <section id="results" className="scroll-mt-24 py-12 px-4 bg-white">
-        <PerformanceBarChart />
+        <RetrievalResultsSection />
       </section>
 
-      {/* Row 5b: Agentic RAG — the downstream efficiency result. Sits right after
-                 the retrieval numbers, because it is what those numbers buy. */}
-      <section id="agentic" className="scroll-mt-24">
+      {/* Row 6: RQ3: Table 3, controlled removal of constructed knowledge */}
+      <section id="robustness" className="scroll-mt-24 py-12 px-4 bg-gray-50/50">
+        <RemovalSection />
+      </section>
+
+      {/* Row 7: RQ4: Tables 4 and 5, readers and a shared ReAct agent */}
+      <section id="agents" className="scroll-mt-24">
         <AgenticRagSection />
       </section>
 
-      {/* Row 6: Ablation — how to best combine retrieval indices (joint, RRF, agreement) */}
-      <section id="ablations" className="scroll-mt-24 py-12 px-4 bg-white">
+      {/* Row 8: appendix ablations: Table 13 and Table 14 */}
+      <section id="ablations" className="scroll-mt-24 py-12 px-4 bg-gray-50/50">
         <AblationResults />
       </section>
-
-      {/* Row 7: How Latent Graph RAG resolves the static-KG limitations —
-                 placed here so the reader already understands documents + memories together */}
-      <div id="solution" className="scroll-mt-24">
-        <LatentSolutionSection />
-      </div>
-
-      {/* Row 8: Upper-bound analysis — why documents help even with perfect oracle triplets.
-                 Serves as empirical proof for the claims made in LatentSolutionSection */}
-      <div id="upper-bound" className="scroll-mt-24">
-        <GroundTruthTripletSection />
-      </div>
 
       {/* Row 9: BibTeX */}
       <section id="citation" className="scroll-mt-24 py-12 px-4 bg-gray-50">
@@ -93,10 +81,10 @@ export default function Home() {
       <footer className="py-10 px-4 bg-gray-100 border-t border-gray-200">
         <div className="max-w-4xl mx-auto text-center">
           <p className="text-sm text-gray-600 mb-2">
-            LatentGraphRAG: Overcoming the Missing-Edge Problem in Knowledge Graphs with Recursive Dense Retrieval
+            {paperMeta.title}
           </p>
           <p className="text-xs text-gray-500">
-            Anonymous ACL submission — author information withheld for review
+            {paperMeta.venue}: author information withheld for review
           </p>
         </div>
       </footer>

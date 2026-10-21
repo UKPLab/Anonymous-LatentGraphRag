@@ -93,6 +93,35 @@ html {
   min-height: 1rem;
 }
 
+/* rehype-pretty-code is configured with two themes, so each token only carries the CSS variables
+   --shiki-dark / --shiki-light. Every code card is dark: paint the tokens with the dark theme. */
+pre[data-theme] code span[style],
+code[data-theme] span[style] {
+  color: var(--shiki-dark);
+  font-style: var(--shiki-dark-font-style);
+  font-weight: var(--shiki-dark-font-weight);
+}
+
+/* Step labels in showcase code (HighlightedCode: a line ending in `#@ Label`). Every line gets the
+   gutter; labelled lines a tint, an accent bar and the label. Port of the RDR docs' step labels. */
+.lgr-steps .line { display: inline-block; width: 100%; padding-left: 6.1rem; position: relative; }
+.lgr-steps .line.lgr-step { background: color-mix(in srgb, var(--step) 13%, transparent); box-shadow: inset 2px 0 0 var(--step); }
+.lgr-steps .line.lgr-step::before {
+  content: attr(data-step); position: absolute; left: 0.45rem; top: 50%; transform: translateY(-50%);
+  font: 600 9px/1.5 ui-sans-serif, system-ui, sans-serif; letter-spacing: 0.02em; text-transform: uppercase;
+  padding: 0 5px; border-radius: 4px; color: var(--step); background: color-mix(in srgb, var(--step) 18%, #0d1117);
+  max-width: 5.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.lgr-step-memory { --step: #34d399; }
+.lgr-step-model { --step: #94a3b8; }
+.lgr-step-index { --step: #60a5fa; }
+.lgr-step-search { --step: #818cf8; }
+.lgr-step-seed { --step: #fb923c; }
+.lgr-step-agent { --step: #38bdf8; }
+.lgr-step-grade { --step: #fbbf24; }
+.lgr-step-install { --step: #c084fc; }
+.lgr-step-other { --step: #94a3b8; }
+
 /* Heading anchor — applied by rehype-autolink-headings */
 .prose-docs .heading-anchor {
   color: inherit;

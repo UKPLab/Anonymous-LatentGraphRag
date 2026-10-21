@@ -1,0 +1,101 @@
+import PrevNext from "@/components/Docs/PrevNext";
+
+export const metadata = {
+  title: "Evaluation · LatentGraphRAG",
+  description: "Retrieve-then-read, the BrowseComp grader, loose list recall and recall@k, as computed for the paper.",
+};
+
+# Evaluation
+
+`latentgraphrag.evaluation` holds the reader, the grader and the metrics behind the paper's tables:
+retrieve-then-read answers, graded answers for single-answer benchmarks, loose list recall for list-valued
+answers, and recall@k for rankings.
+
+## Retrieve-then-read
+
+`Reader` answers from a seed without searching. It is the agent's controller model with the read-only
+prompt: its first turn is identical to the agent's (the seed as numbered documents, then the question), and a
+turn without an answer line receives one follow-up request for it. Context fitting is off.
+
+```python
+from latentgraphrag import OpenAIChatModel, Reader, Seed
+
+llm = OpenAIChatModel()
+reader = Reader(llm)
+trajectory = reader.read(question, Seed.from_ranking(result.ids, documents))
+trajectory.final_answer
+```
+
+`Reader(llm, max_tokens=8192, followup_max_tokens=512, frequency_penalty=0.4, context_length=65536,
+retry_sleep=3.0)`. `read` returns a one-step `Trajectory`, the same type the agent returns, so readers and
+agents are graded and exported alike.
+
+## Grading
+
+`BrowseCompGrader` applies the official BrowseComp grader template. The paper grades with the controller
+model itself at temperature 0.
+
+```python
+from latentgraphrag import BrowseCompGrader
+
+grader = BrowseCompGrader(llm)
+verdict = grader.grade(question, trajectory.output, gold_answer)
+verdict = grader.grade_trajectory(trajectory, gold_answer)   # the same, from a trajectory
+
+verdict.correct     # True / False, or None without a verdict line
+verdict.score       # 1.0 if correct, else 0.0 (None counts as incorrect)
+verdict.extracted   # the answer the grader extracted
+```
+
+The grader sees the final answer line only: `Exact Answer: …` taken from the last answer line of the output,
+or the last 2,000 characters of the output when it has none. This keeps long reasoning out of the grader's
+input.
+
+| Parameter | Default | Description |
+| --- | --- | --- |
+| `llm` |  | grader model |
+| `template` | `GRADER_TEMPLATE` | the BrowseComp grader template |
+| `response` | `"final_line"` | what the grader sees; `"tail"` (last 20,000 characters) is an earlier variant not used for the paper's tables |
+| `max_tokens` | `1024` | grader generation cap |
+| `attempts` | `4` | calls before giving up on a missing verdict |
+
+## Answer metrics
+
+List-valued answers (FanOutQA) are scored by **loose list recall**: the share of gold list items found in the
+response. The gold answer is split on `;`. An item `key: value` counts when every token of its normalized key
+and value occurs in the normalized response; an item without `:` counts when every token of its value does.
+
+```python
+from latentgraphrag.evaluation import final_answer_line, loose_final, loose_list_recall
+
+loose_final(trajectory.output, gold)            # the paper's FanOutQA score
+loose_list_recall(final_answer_line(trajectory.output), gold)   # first-line sensitivity variant
+```
+
+| Function | Description |
+| --- | --- |
+| `loose_list_recall(response, gold)` | loose list recall of a response; gold as a string or a list (joined with `"; "`) |
+| `loose_final(output, gold)` | loose list recall on the final answer text: everything after the last `Exact Answer:`, so answers continued over several lines count; the whole output without an answer line |
+| `final_answer_line(output)` | only the line after the last `Exact Answer:` |
+| `final_answer_text(output)` | the final answer text used by `loose_final` and `Trajectory.final_answer` |
+| `normalize_text(text)` | lower-case, runs of non-alphanumeric characters to one space |
+
+## Retrieval metrics
+
+```python
+from latentgraphrag import retrieval_metrics
+from latentgraphrag.evaluation import recall_at_k
+
+recall_at_k(result.ids, {"d3", "d7"}, k=5)                            # gold document ids
+recall_at_k(result.ids, {"q1": {"d3", "d4"}, "q2": {"d7"}}, k=5)      # gold groups
+
+retrieval_metrics([r.ids for r in results], gold, ks=(1, 5, 10, 20, 50, 100))
+# {"recall@1": ..., "recall@5": ..., ..., "queries_with_gold": ...}
+```
+
+Gold labels are either a set of document ids (recall is the fraction retrieved) or groups of interchangeable
+documents, `{group: set of ids}` (recall is the fraction of groups with at least one retrieved member, as for
+FanOutQA source groups). `retrieval_metrics` averages recall@k over the questions that have gold labels and
+reports their number as `queries_with_gold`.
+
+<PrevNext pathname="/docs/evaluation" />

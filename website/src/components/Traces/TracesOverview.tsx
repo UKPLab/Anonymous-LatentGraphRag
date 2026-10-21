@@ -1,28 +1,17 @@
 "use client";
 
 /**
- * Overview of every released run. The aggregate numbers here are the paper's
- * (paperResults.ts); the per-run trace payload is only consulted to decide
- * whether a row is clickable and how many samples it has.
+ * Overview of the released agent runs. Every number shown is the paper's
+ * (lgrPaper.ts, the submitted version); the trace payload is only consulted to decide
+ * which cells open trajectories. Runs are matched to table rows by the paper's own
+ * row label, which the exporter writes into the manifest.
  */
 
 import Link from "next/link";
-import { Fragment, useEffect, useMemo, useState } from "react";
-import { ArrowRight, Database, FileText, Info } from "lucide-react";
-import {
-  reactLoop,
-  retrieveThenRead,
-  judgeVariability,
-  TRACE_DATASETS,
-  type DatasetKey,
-} from "@/data/paperResults";
-import {
-  loadRuns,
-  loadSeedSets,
-  datasetLabel,
-  type RunMeta,
-  type SeedSetMeta,
-} from "@/lib/traces";
+import { useEffect, useMemo, useState } from "react";
+import { ArrowRight, FileText, Info } from "lucide-react";
+import { table4ReadOnly, table5React, frozenConfig, type Cell } from "@/data/lgrPaper";
+import { loadRuns, type DatasetKey, type RunMeta } from "@/lib/traces";
 import ViewSwitch from "./ViewSwitch";
 
 const CARD = "rounded-xl border border-gray-200 bg-white overflow-hidden";
@@ -30,32 +19,42 @@ const TH =
   "px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-gray-500";
 const TD = "px-3 py-2 text-sm text-gray-800 whitespace-nowrap";
 
-function num(v: number | null | undefined, digits = 1) {
-  return v === null || v === undefined ? "–" : v.toFixed(digits);
+/** Column groups as printed; BrowseComp+ has numbers but no released traces. */
+const BENCH: { dataset: DatasetKey | null; label: string }[] = [
+  { dataset: "musique", label: "MuSiQue" },
+  { dataset: "fanoutqa", label: "FanOutQA" },
+  { dataset: null, label: "BC+ (pool)" },
+];
+
+function CellText({ cell }: { cell: Cell }) {
+  return (
+    <span
+      className={`${cell.best ? "font-semibold" : ""} ${cell.second ? "underline" : ""} ${
+        cell.sig ? "text-emerald-700" : ""
+      }`}
+    >
+      {cell.value}
+      {cell.dagger && <sup>†</sup>}
+      {cell.star && <sup>∗</sup>}
+    </span>
+  );
 }
 
-function TraceLink({
-  runs,
-  dataset,
-  runId,
-  children,
+function TraceCell({
+  run,
+  cell,
 }: {
-  runs: RunMeta[];
-  dataset: DatasetKey;
-  runId?: string;
-  children: React.ReactNode;
+  run: RunMeta | undefined;
+  cell: Cell;
 }) {
-  const run = runId
-    ? runs.find((r) => r.run_id === runId && r.dataset === dataset)
-    : undefined;
-  if (!run) return <span className="text-gray-400">{children}</span>;
+  if (!run) return <CellText cell={cell} />;
   return (
     <Link
-      href={`/traces/results/?ds=${dataset}&run=${runId}`}
+      href={`/traces/results/?ds=${run.dataset}&run=${run.run_id}`}
       className="group inline-flex items-center gap-1 text-blue-700 hover:text-blue-900 hover:underline"
-      title="Open the trajectories for this run"
+      title="Open the trajectories behind this cell"
     >
-      {children}
+      <CellText cell={cell} />
       <ArrowRight className="w-3 h-3 opacity-0 group-hover:opacity-100 transition" />
     </Link>
   );
@@ -63,38 +62,39 @@ function TraceLink({
 
 export default function TracesOverview() {
   const [runs, setRuns] = useState<RunMeta[]>([]);
-  const [seedSets, setSeedSets] = useState<SeedSetMeta[]>([]);
   const [err, setErr] = useState<string | null>(null);
-  // MuSiQue first: it is the depth benchmark the method was designed for
-  const [ds, setDs] = useState<DatasetKey>("musique");
 
   useEffect(() => {
     loadRuns().then(setRuns).catch((e) => setErr(String(e)));
-    loadSeedSets().then(setSeedSets).catch(() => {});
   }, []);
 
-  const stats = useMemo(() => {
-    const samples = runs.reduce((a, r) => a + r.n, 0);
-    return { runs: runs.length, samples };
-  }, [runs]);
+  const find = useMemo(
+    () => (table: string, dataset: DatasetKey | null, label: string) =>
+      dataset
+        ? runs.find((r) => r.table === table && r.dataset === dataset && r.label === label)
+        : undefined,
+    [runs],
+  );
+
+  const stats = useMemo(
+    () => ({ runs: runs.length, samples: runs.reduce((a, r) => a + r.n, 0) }),
+    [runs],
+  );
 
   return (
     <main className="max-w-screen-xl mx-auto px-4 lg:px-6 py-10">
       <header className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900">
-          Evaluation trajectories
-        </h1>
+        <h1 className="text-3xl font-bold text-gray-900">Agent trajectories</h1>
         <p className="mt-3 text-gray-600 max-w-3xl">
-          Every run behind the paper, at full sample count — not a sample of
-          them. Click any method name to open its trajectories: the injected
-          seed with its ranked documents, each reasoning and observation step,
-          every search the agent issued with what came back, the final answer
-          and the judge&apos;s verdict.
+          The runs behind the paper&apos;s reader and agent tables, at full sample
+          count. Click a MuSiQue or FanOutQA cell to open its trajectories: the
+          evidence the reader or agent started from, every reasoning step and
+          search with what came back, the final answer and its grade.
         </p>
         {stats.runs > 0 && (
           <p className="mt-3 text-sm text-gray-500">
             {stats.runs} runs · {stats.samples.toLocaleString()} trajectories ·
-            all three benchmarks
+            MuSiQue and FanOutQA
           </p>
         )}
         {err && (
@@ -118,117 +118,76 @@ export default function TracesOverview() {
         </p>
       </div>
 
-      {/* dataset selector */}
-      <div className="flex flex-wrap gap-2 mb-6">
-        {TRACE_DATASETS.map((d) => (
-          <button
-            key={d.key}
-            onClick={() => setDs(d.key)}
-            className={`px-3 py-1.5 rounded-md text-sm border transition ${
-              ds === d.key
-                ? "border-blue-500 bg-blue-50 text-blue-700 font-semibold"
-                : "border-gray-200 text-gray-600 hover:bg-gray-50"
-            }`}
-          >
-            {d.label}
-            <span className="ml-2 text-xs text-gray-400">{d.n}</span>
-          </button>
-        ))}
-      </div>
-
-      {/* Results / Trajectories. Sits under the dataset chips so the dataset stays
-          the outer choice and carries over into the viewer. */}
       <div className="mb-6">
-        <ViewSwitch view="results" dataset={ds} />
+        <ViewSwitch view="results" dataset="musique" />
       </div>
 
       <p className="mb-8 text-xs text-gray-500 flex items-start gap-2 max-w-3xl">
         <Info className="w-4 h-4 mt-px shrink-0" />
         <span>
-          Accuracy is LLM-judged for MuSiQue and BrowseComp+ and loose
-          list-recall for FanOutQA. The table values are the paper&apos;s, whose
-          BrowseComp+ cells are means over {judgeVariability.passes} judge
-          passes; the per-sample verdicts in the viewer come from a single pass,
-          so their share can differ by up to {judgeVariability.maxSpread} points.
-          Differences below one point are within judge variability.
+          Reader and agent: {frozenConfig.controller}. MuSiQue and BrowseComp+
+          answers are graded by the official BrowseComp grader on the final answer
+          (same model, temperature 0); FanOutQA by loose list recall on the answer
+          text. All table values are the paper&apos;s.
         </span>
       </p>
 
-      {/* ------------------------------------------------ Table 3: ReAct loop */}
+      {/* ------------------------------------------------ Table 5: shared ReAct agent */}
       <section className="mb-10">
         <h2 className="text-lg font-semibold text-gray-900 mb-1">
-          ReAct loop — reader Qwen3.5-122B
+          Shared ReAct agent — Table 5
         </h2>
         <p className="text-sm text-gray-500 mb-3">
-          Paper Table 3. The injected seed is excluded from the tool count.
+          Controller, prompt, {frozenConfig.agentSearchTool} search tool and budget
+          are shared; only the top-ten seed varies. Srch is searches per question
+          after seeding. The table reports means over repeated runs; each linked
+          cell opens one of those runs.
         </p>
         <div className={CARD}>
           <div className="overflow-x-auto">
             <table className="min-w-full border-collapse">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
-                  <th className={TH}>Configuration</th>
-                  <th className={TH}>Accuracy</th>
-                  <th className={TH}>Tool calls</th>
+                  <th className={TH} rowSpan={2}>
+                    Seed
+                  </th>
+                  {table5React.columns.map((col) => (
+                    <th key={col.benchmark} className={`${TH} text-center`} colSpan={2}>
+                      {col.benchmark}
+                    </th>
+                  ))}
+                </tr>
+                <tr>
+                  {table5React.columns.flatMap((col) =>
+                    col.metrics.map((m) => (
+                      <th key={`${col.benchmark}-${m}`} className={TH}>
+                        {m}
+                      </th>
+                    )),
+                  )}
                 </tr>
               </thead>
               <tbody>
-                {(["ours", "benchmark"] as const).map((block) => (
-                  <Fragment key={block}>
-                    <tr className="bg-gray-50/60">
-                      <td
-                        className="px-3 py-1.5 text-xs italic text-gray-500"
-                        colSpan={3}
-                      >
-                        {block === "ours"
-                          ? "Our retrieval-first ReAct loop"
-                          : "BrowseComp+ ReAct agent (original prompt, no seed)"}
-                      </td>
-                    </tr>
-                    {reactLoop
-                      .filter((r) => r.block === block)
-                      .map((r) => {
-                        const acc =
-                          ds === "musique"
-                            ? r.musiqueAcc
-                            : ds === "browsecomp"
-                              ? r.browseCompAcc
-                              : r.fanoutqaAcc;
-                        const tools =
-                          ds === "musique"
-                            ? r.musiqueTools
-                            : ds === "browsecomp"
-                              ? r.browseCompTools
-                              : r.fanoutqaTools;
-                        return (
-                          <tr
-                            key={r.config}
-                            className="border-b border-gray-100 last:border-0 hover:bg-blue-50/30"
-                          >
-                            <td className={TD}>
-                              <TraceLink runs={runs} dataset={ds} runId={r.runId}>
-                                <span
-                                  className={r.isBest ? "font-semibold" : ""}
-                                >
-                                  {r.config}
-                                </span>
-                              </TraceLink>
-                              {r.note && (
-                                <span className="ml-2 text-xs text-gray-400">
-                                  {r.note}
-                                </span>
-                              )}
-                            </td>
-                            <td
-                              className={`${TD} ${r.isBest ? "font-semibold" : ""}`}
-                            >
-                              {num(acc)}
-                            </td>
-                            <td className={TD}>{num(tools, 2)}</td>
-                          </tr>
-                        );
-                      })}
-                  </Fragment>
+                {table5React.rows.map((row) => (
+                  <tr
+                    key={row.seed}
+                    className="border-b border-gray-100 last:border-0 hover:bg-blue-50/30"
+                  >
+                    <td className={`${TD} ${row.kind === "lgr" ? "font-semibold" : ""}`}>
+                      {row.seed}
+                    </td>
+                    {BENCH.map((b, bi) => {
+                      const run = find("table5", b.dataset, row.seed);
+                      return [
+                        <td key={`${bi}a`} className={TD}>
+                          <TraceCell run={run} cell={row.cells[2 * bi]} />
+                        </td>,
+                        <td key={`${bi}s`} className={TD}>
+                          <CellText cell={row.cells[2 * bi + 1]} />
+                        </td>,
+                      ];
+                    })}
+                  </tr>
                 ))}
               </tbody>
             </table>
@@ -236,62 +195,103 @@ export default function TracesOverview() {
         </div>
       </section>
 
-
-      {/* ------------------------------------- Table 2: retrieve-then-read */}
+      {/* ---------------------------------------------- Table 4: read-only answers */}
       <section className="mb-10">
         <h2 className="text-lg font-semibold text-gray-900 mb-1">
-          Retrieve-then-read — released seeds
+          Read-only answers — Table 4
         </h2>
         <p className="text-sm text-gray-500 mb-3">
-          Paper Table 2. These runs are a single reader call over a fixed
-          ranking, so there is no trajectory to show and the result files did not
-          retain the generated answers. What we release instead is the{" "}
-          <strong>seed itself</strong>: the ranked evidence each row was given,
-          per question, which is also what is needed to reproduce the numbers.
+          The reader answers from each method&apos;s top-ten evidence alone and
+          cannot search. Δ is the LatentGraphRAG row minus each row.
         </p>
         <div className={CARD}>
           <div className="overflow-x-auto">
             <table className="min-w-full border-collapse">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
-                  <th className={TH}>Retrieval seed</th>
-                  <th className={TH}>MuSiQue</th>
-                  <th className={TH}>BrowseComp+</th>
-                  <th className={TH}>FanOutQA</th>
+                  <th className={TH} rowSpan={2}>
+                    Evidence
+                  </th>
+                  {table4ReadOnly.columns.map((col) => (
+                    <th key={col.benchmark} className={`${TH} text-center`} colSpan={2}>
+                      {col.benchmark}
+                    </th>
+                  ))}
+                </tr>
+                <tr>
+                  {table4ReadOnly.columns.flatMap((col) =>
+                    col.metrics.map((m) => (
+                      <th key={`${col.benchmark}-${m}`} className={TH}>
+                        {m}
+                      </th>
+                    )),
+                  )}
                 </tr>
               </thead>
               <tbody>
-                {retrieveThenRead.map((r) => {
-                  const set = seedSets.find(
-                    (s) => s.dataset === ds && s.method === r.seedMethod,
-                  );
+                {table4ReadOnly.rows.map((row) => (
+                  <tr
+                    key={row.evidence}
+                    className="border-b border-gray-100 last:border-0 hover:bg-blue-50/30"
+                  >
+                    <td className={`${TD} ${row.kind === "lgr" ? "font-semibold" : ""}`}>
+                      {row.evidence}
+                    </td>
+                    {BENCH.map((b, bi) => {
+                      const run = find("table4_read", b.dataset, row.evidence);
+                      return [
+                        <td key={`${bi}a`} className={TD}>
+                          <TraceCell run={run} cell={row.cells[2 * bi]} />
+                        </td>,
+                        <td key={`${bi}d`} className={TD}>
+                          <CellText cell={row.cells[2 * bi + 1]} />
+                        </td>,
+                      ];
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <h3 className="mt-6 text-sm font-semibold text-gray-900 mb-1">
+          {table4ReadOnly.reactMinusReadOnly.title}
+        </h3>
+        <p className="text-sm text-gray-500 mb-3">
+          The same top-ten evidence given to the standard ReAct agent, which may
+          search. Each cell opens the agent&apos;s trajectories.
+        </p>
+        <div className={CARD}>
+          <div className="overflow-x-auto">
+            <table className="min-w-full border-collapse">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th className={TH}>Evidence</th>
+                  {BENCH.map((b) => (
+                    <th key={b.label} className={TH}>
+                      {b.label}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {table4ReadOnly.reactMinusReadOnly.rows.map((row) => {
+                  const cells = [row.musique, row.fanoutqa, row.browsecomp];
                   return (
                     <tr
-                      key={r.seed}
+                      key={row.evidence}
                       className="border-b border-gray-100 last:border-0 hover:bg-blue-50/30"
                     >
-                      <td className={`${TD} ${r.isBest ? "font-semibold" : ""}`}>
-                        {set && set.n_with_seed > 0 ? (
-                          <Link
-                            href={`/traces/results/?ds=${ds}&seeds=${r.seedMethod}`}
-                            className="text-blue-700 hover:text-blue-900 hover:underline inline-flex items-center gap-1"
-                          >
-                            <Database className="w-3 h-3" />
-                            {r.seed}
-                          </Link>
-                        ) : (
-                          r.seed
-                        )}
-                      </td>
-                      <td className={`${TD} ${r.isBest ? "font-semibold" : ""}`}>
-                        {num(r.musique)}
-                      </td>
-                      <td className={`${TD} ${r.isBest ? "font-semibold" : ""}`}>
-                        {num(r.browseComp)}
-                      </td>
-                      <td className={`${TD} ${r.isBest ? "font-semibold" : ""}`}>
-                        {num(r.fanoutqa)}
-                      </td>
+                      <td className={TD}>{row.evidence}</td>
+                      {BENCH.map((b, bi) => (
+                        <td key={b.label} className={TD}>
+                          <TraceCell
+                            run={find("table4_react", b.dataset, row.evidence)}
+                            cell={cells[bi]}
+                          />
+                        </td>
+                      ))}
                     </tr>
                   );
                 })}
@@ -308,22 +308,21 @@ export default function TracesOverview() {
         </h3>
         <ul className="space-y-1 list-disc pl-5">
           <li>
-            Documents are stored once and referenced by corpus id, so a
-            document that appears in many trajectories is downloaded once.
+            Each trajectory keeps the full record: the starting evidence, every
+            turn the model produced, every search with the five documents it
+            returned, the final answer and its grade.
           </li>
           <li>
-            Retrieved documents are marked{" "}
+            Documents are stored once and referenced by corpus id, so a document
+            that appears in many trajectories is downloaded once.
+          </li>
+          <li>
+            Documents are marked{" "}
             <span className="text-amber-700 font-medium">gold</span> or{" "}
-            <span className="text-sky-700 font-medium">evidence</span>;
-            everything else is a distractor. BrowseComp+ and FanOutQA use the
-            benchmarks&apos; official qrels; MuSiQue has no qrels, so its gold
-            documents come from the supporting-paragraph annotations and it has
-            no separate evidence tier.
-          </li>
-          <li>
-            Every released run is scored. Where a score is genuinely unavailable
-            the table shows <strong>–</strong> rather than a number, and those
-            samples carry no verdict instead of being counted as wrong.
+            <span className="text-sky-700 font-medium">evidence</span>; everything
+            else is a distractor. FanOutQA uses the benchmark&apos;s official
+            qrels; MuSiQue has no qrels, so its gold documents are the supporting
+            paragraphs of each question and it has no separate evidence tier.
           </li>
         </ul>
       </section>

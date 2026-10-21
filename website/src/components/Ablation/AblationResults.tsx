@@ -1,164 +1,60 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { ablationData } from "@/data/performanceData";
+import { frozenConfig, paperMeta, table1Columns, table13AllViews, table14Projection } from "@/data/lgrPaper";
+import PaperTable from "@/components/PaperTables/PaperTable";
 
+/** Appendix ablations: every view and fusion operator (Table 13) and the projection (Table 14). */
 export default function AblationResults() {
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true }}
-      className="max-w-5xl mx-auto"
-    >
-      <div className="text-center mb-8">
-        <h2 className="text-xl md:text-2xl lg:text-3xl font-bold text-gray-900 mb-2">
-          Ablation: How to Best Combine Documents and Memories?
+    <div className="max-w-6xl mx-auto">
+      <motion.div initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }}
+        className="text-center mb-6">
+        <h2 className="text-xl md:text-2xl lg:text-3xl font-bold text-gray-900 mb-3">
+          Which Views, Which Fusion, Which Projection?
         </h2>
-        <p className="text-gray-600 max-w-2xl mx-auto text-sm">
-          We ablate how to best combine document and relational-memory indices.
-          Document–memory agreement is strongest on MuSiQue R@10.
-          Numbers verbatim from the paper&apos;s Table 1.
+        <p className="text-gray-600 max-w-3xl mx-auto text-sm leading-relaxed">
+          Separate trees fused at the source level against a joint index J that lets documents and memories
+          alternate within one path, each fused with {frozenConfig.fusionOperatorsCompared.join(", ")}.
+          The reported configuration is D+M with {frozenConfig.viewFusion}; the readout is inherited from RDR, so
+          these are aggregation choices, not new update operators.
         </p>
+      </motion.div>
+
+      <PaperTable
+        firstColumn="View"
+        columns={table1Columns.slice(0, 3)}
+        groups={table13AllViews.map((g) => ({
+          title: g.title,
+          rows: g.rows.map((r) => ({
+            label: r.view,
+            cells: r.cells,
+            tone: "reported" in r && r.reported ? "lgr" : "plain",
+            strong: "reported" in r && r.reported,
+          })),
+        }))}
+        caption={
+          <>
+            Table 13 of the paper (appendix). All views and fusion operators of LatentGraphRAG with documents and
+            triples at the frozen configuration, R@5 / R@10; best per column in bold. Highlighted: the reported
+            fusion.
+          </>
+        }
+      />
+
+      <div className="mt-8 max-w-3xl mx-auto">
+        <h3 className="text-sm font-bold text-gray-900 mb-1">Mapping memories to documents</h3>
+        <p className="text-xs text-gray-500 mb-3">
+          Change in fused R@5 when the {table14Projection.reference} in the projection is replaced, with triples and
+          propositions at the frozen configuration. No alternative improves every benchmark.
+        </p>
+        <PaperTable
+          firstColumn="Projection"
+          columns={[{ benchmark: `Δ R@5 vs. ${table14Projection.reference}`, metrics: paperMeta.benchmarks }]}
+          groups={[{ rows: table14Projection.rows.map((r) => ({ label: r.projection, cells: r.cells })) }]}
+          caption={<>Table 14 of the paper (appendix). ∗: the paired interval excludes zero.</>}
+        />
       </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {ablationData.map((entry, idx) => (
-          <motion.div
-            key={entry.shortName}
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            transition={{ delay: idx * 0.1 }}
-            className={`relative p-6 rounded-2xl border-2 ${
-              entry.isBest
-                ? "bg-blue-50 border-blue-300 shadow-lg shadow-blue-100/50"
-                : "bg-white border-gray-200"
-            }`}
-          >
-            {entry.isBest && (
-              <div className="absolute -top-3 left-1/2 -translate-x-1/2 whitespace-nowrap">
-                <span className="px-3 py-1 bg-blue-500 text-white text-xs font-bold rounded-full shadow-md">
-                  Best on MuSiQue
-                </span>
-              </div>
-            )}
-
-            <h3
-              className={`text-base font-bold mb-2 ${
-                entry.isBest ? "text-blue-700" : "text-gray-900"
-              }`}
-            >
-              {entry.shortName}
-            </h3>
-            <p className="text-xs text-gray-500 mb-4 leading-relaxed">
-              {entry.description}
-            </p>
-
-            <div className="space-y-3">
-              {/* MuSiQue R@5 */}
-              <div>
-                <div className="flex items-baseline justify-between mb-1">
-                  <span className="text-xs text-gray-500 font-medium">MuSiQue R@5</span>
-                  <span
-                    className={`text-lg font-bold font-mono ${
-                      entry.isBest ? "text-blue-600" : "text-gray-800"
-                    }`}
-                  >
-                    {entry.musiqueR5.toFixed(2)}
-                  </span>
-                </div>
-                <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
-                  <motion.div
-                    initial={{ width: 0 }}
-                    whileInView={{ width: `${(entry.musiqueR5 / 90) * 100}%` }}
-                    viewport={{ once: true }}
-                    transition={{ duration: 0.8, delay: 0.3 + idx * 0.1 }}
-                    className={`h-full rounded-full ${
-                      entry.isBest ? "bg-blue-500" : "bg-gray-400"
-                    }`}
-                  />
-                </div>
-              </div>
-
-              {/* MuSiQue R@10 */}
-              <div>
-                <div className="flex items-baseline justify-between mb-1">
-                  <span className="text-xs text-gray-500 font-medium">MuSiQue R@10</span>
-                  <span
-                    className={`text-lg font-bold font-mono ${
-                      entry.isBest ? "text-blue-600" : "text-gray-800"
-                    }`}
-                  >
-                    {entry.musiqueR10.toFixed(2)}
-                  </span>
-                </div>
-                <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
-                  <motion.div
-                    initial={{ width: 0 }}
-                    whileInView={{ width: `${(entry.musiqueR10 / 95) * 100}%` }}
-                    viewport={{ once: true }}
-                    transition={{ duration: 0.8, delay: 0.4 + idx * 0.1 }}
-                    className={`h-full rounded-full ${
-                      entry.isBest ? "bg-blue-500" : "bg-gray-400"
-                    }`}
-                  />
-                </div>
-              </div>
-
-              {/* FanOutQA R@5 */}
-              <div>
-                <div className="flex items-baseline justify-between mb-1">
-                  <span className="text-xs text-gray-500 font-medium">FanOutQA R@5</span>
-                  <span
-                    className={`text-lg font-bold font-mono ${
-                      entry.isBest ? "text-blue-600" : "text-gray-800"
-                    }`}
-                  >
-                    {entry.fanoutqaR5.toFixed(2)}
-                  </span>
-                </div>
-                <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
-                  <motion.div
-                    initial={{ width: 0 }}
-                    whileInView={{ width: `${(entry.fanoutqaR5 / 35) * 100}%` }}
-                    viewport={{ once: true }}
-                    transition={{ duration: 0.8, delay: 0.5 + idx * 0.1 }}
-                    className={`h-full rounded-full ${
-                      entry.isBest ? "bg-blue-500" : "bg-gray-400"
-                    }`}
-                  />
-                </div>
-              </div>
-
-              {/* FanOutQA R@10 */}
-              <div>
-                <div className="flex items-baseline justify-between mb-1">
-                  <span className="text-xs text-gray-500 font-medium">FanOutQA R@10</span>
-                  <span
-                    className={`text-lg font-bold font-mono ${
-                      entry.isBest ? "text-blue-600" : "text-gray-800"
-                    }`}
-                  >
-                    {entry.fanoutqaR10.toFixed(2)}
-                  </span>
-                </div>
-                <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
-                  <motion.div
-                    initial={{ width: 0 }}
-                    whileInView={{ width: `${(entry.fanoutqaR10 / 45) * 100}%` }}
-                    viewport={{ once: true }}
-                    transition={{ duration: 0.8, delay: 0.6 + idx * 0.1 }}
-                    className={`h-full rounded-full ${
-                      entry.isBest ? "bg-blue-500" : "bg-gray-400"
-                    }`}
-                  />
-                </div>
-              </div>
-            </div>
-          </motion.div>
-        ))}
-      </div>
-    </motion.div>
+    </div>
   );
 }

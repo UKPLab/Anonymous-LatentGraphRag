@@ -1,0 +1,226 @@
+import PrevNext from "@/components/Docs/PrevNext";
+
+export const metadata = {
+  title: "API · LatentGraphRAG",
+  description: "Signatures of the latentgraphrag package: construction, inventory, configuration, retrieval, agent and evaluation.",
+};
+
+# API
+
+Signatures of the public names, grouped by module. Names marked *top level* are also importable from
+`latentgraphrag` directly. The guides explain how the pieces fit together.
+
+## latentgraphrag.construction
+
+[Guide](/docs/construction). *Top level:* `triples`, `propositions`, `chunk_id`.
+
+```python
+chunk_id(title: str, text: str) -> str                  # "chunk-" + md5(title + "\n" + text)
+
+triples.render(head, relation, tail) -> str | None      # "head relation tail."
+triples.load_openie(path) -> list[dict]                 # {"docs": [...]} or JSON lines, .gz ok
+triples.from_openie(records, source_of=None) -> MemoryInventory
+triples.extract_with_hipporag(passages, llm_name, llm_base_url, save_dir, hipporag_src=None) -> list[dict]
+
+propositions.render(text) -> str | None
+propositions.load_records(path) -> list[dict]
+propositions.from_records(records, source_of=None) -> MemoryInventory
+propositions.extract_with_proprag(passages, llm_name, llm_base_url, save_dir, proprag_root) -> list[dict]
+```
+
+`source_of` is a mapping or a callable from a record's `idx` to a document id; records it does not know are
+skipped.
+
+## latentgraphrag.inventory
+
+*Top level:* `MemoryInventory`.
+
+```python
+@dataclass
+class MemoryInventory:
+    texts: list[str]
+    sources: list[list]            # source document ids per memory
+    kinds: list[str]               # "triple" or "proposition"
+
+    add(text, source, kind) -> None
+    from_links(links, kind) -> MemoryInventory              # classmethod; (text, source) pairs
+    from_map(mapping, kind) -> MemoryInventory              # classmethod; {text: id or [ids]}
+    union(*inventories) -> MemoryInventory                  # classmethod; provenance merged
+    select(kind) -> MemoryInventory
+    stats() -> dict[str, int]
+    source_map() -> dict[int, list]
+    to_map() -> dict[str, list]
+    save_map(path) / load_map(path, kind)                   # {text: [ids]} JSON, .gz ok
+    save_jsonl(path) / load_jsonl(path)                     # {"text", "sources", "kind"} per line
+```
+
+## latentgraphrag.config
+
+*Top level:* `LGRConfig`, `PAPER`.
+
+```python
+@dataclass(frozen=True)
+class LGRConfig:
+    depth: int = 4
+    branching: int = 3
+    memory_branching: int = 3
+    memory_mmr: bool = True
+    mmr_lambda: float = 0.5
+    mmr_pool: int = 5
+    joint_branching: int = 3
+    temperature: float = 0.02
+    top_k: int = 200
+    projection: str = "max"
+    fusion: str = "combmnz"
+    document_weight: float = 1.0
+    memory_weight: float = 0.5
+    rrf_k: int = 60
+    observation_max_tokens: int = 512
+
+    with_(**changes) -> LGRConfig
+
+PAPER = LGRConfig()
+```
+
+Field descriptions are on the [Retrieval](/docs/retrieval#configuration) page.
+
+## latentgraphrag.retrieval
+
+[Guide](/docs/retrieval); saving and loading: [Index, save, reuse](/docs/indexing). *Top level:* `LatentGraphRAG`, `LGRIndex`, `LGRResult`, `MMRTreeSearch`, `project`,
+`fuse`, `rank`, `VIEWS`.
+
+```python
+class LatentGraphRAG:
+    def __init__(self, model, config: LGRConfig = PAPER, **rdr_kwargs)
+    def build(self, documents, inventory=None, groups=None, cache_dir=None,
+              show_progress_bar=True) -> LGRIndex
+    def load_index(self, path) -> LGRIndex            # LGRIndex.load onto this retriever's index device
+    def search(self, queries, index, k=10, view="D+M", instruction=None) -> list[LGRResult]
+
+@dataclass
+class LGRIndex:
+    documents: DenseIndex           # RDR index over documents (or chunks)
+    memories: DenseIndex | None
+    inventory: MemoryInventory | None
+    doc_of: list                    # document id per position of `documents`
+    def joint(self) -> DenseIndex   # documents and memories in one index, no re-encoding
+    def save(self, path)            # documents/, memories/, inventory.jsonl, lgr_index.json
+    @classmethod
+    def load(cls, path, device=None, dtype=None) -> LGRIndex
+
+@dataclass
+class LGRResult:
+    ranking: list[tuple[id, float]]
+    views: dict[str, dict[id, float]]
+    ids: list                       # property: document ids of `ranking`
+    document_view: dict             # property: views["D"]
+    memory_view: dict               # property: views["M"]
+
+VIEWS = ("D+M", "D", "M", "J", "D+J")
+
+class MMRTreeSearch(rdr.search.TreeSearch):
+    def __init__(self, depth=4, branching=3, lam=0.5, pool=5, embeddings=None)
+    def bind(self, index) -> MMRTreeSearch
+
+project(scores, source_of, reduce="max") -> dict        # PROJECTIONS = max, sum, mean, pmax2, pmax4, noisy_or
+fuse(views, weights=None, method="combmnz", rrf_k=60) -> dict   # FUSIONS = combmnz, combsum, z, rrf, max
+rank(scores, k=None) -> list
+```
+
+## latentgraphrag.agent
+
+[Guide](/docs/agent). *Top level:* `ReActAgent`, `Seed`, `Trajectory`, `DenseSearchTool`,
+`RankFileFusedSearchTool`, `OpenAIChatModel`.
+
+```python
+class ReActAgent:
+    def __init__(self, llm, search_tool, max_searches=10, policy="standard",
+                 seed_placement="documents", max_tokens=8192, followup_max_tokens=512,
+                 frequency_penalty=0.4, context_length=65536, fit_context=True, retry_sleep=3.0)
+    def run(self, question, seed=None) -> Trajectory
+    def initial_messages(self, question, seed) -> list[dict]
+
+POLICIES    # standard, seed_aware, read_only, std, tgt, tgt_noprefer, tgt_broad, std_seed
+
+@dataclass(frozen=True)
+class Seed:
+    docs: tuple[SeedDoc, ...]       # SeedDoc(text, doc_id=None)
+    from_ranking(ranking, texts, k=10, text_cap=2200) -> Seed     # classmethod
+    from_texts(texts, ids=None, k=10, text_cap=2200) -> Seed      # classmethod
+    empty() -> Seed                                               # classmethod
+    texts, ids                                                    # properties
+
+@dataclass
+class Trajectory:
+    question: str
+    system_prompt: str
+    seed: Seed
+    steps: list[Step]
+    output: str
+    final_answer: str
+    tool_calls: int
+    tokens_in: int
+    tokens_out: int
+    policy: str
+    seed_placement: str
+    to_runner_row(query_id=None, gold_answer=None, seed_method=None) -> dict
+    to_trace_record(qid, gold_answer=None, correct=None, loose=None, judge=None, doc_id=None) -> dict
+
+class DenseSearchTool:
+    def __init__(self, embeddings, texts, ids=None, query_encoder=None, k=5, text_cap=2000,
+                 log_top=1000)
+
+class RankFileFusedSearchTool:
+    def __init__(self, base: DenseSearchTool, rank_lists, k=5, rrf_offset=61, position_of=None,
+                 match_seed_text=True)
+
+class Qwen3QueryEncoder:
+    def __init__(self, model_name="Qwen/Qwen3-Embedding-8B", device="cuda", dtype="float16",
+                 max_chars=512, max_length=512)
+    def __call__(self, query: str) -> np.ndarray
+
+class SearchTool(Protocol):
+    def start(self, question, seed) -> SearchContext
+    def search(self, query, context) -> SearchResult      # hits, top_positions, top_scores
+
+class ChatModel(Protocol):
+    def chat(self, messages, *, max_tokens, temperature, frequency_penalty) -> ChatResult
+
+class OpenAIChatModel:
+    def __init__(self, model="Qwen/Qwen3.5-122B-A10B", base_url="http://localhost:8000/v1",
+                 api_key="EMPTY", timeout=7200.0, enable_thinking=False, extra_body=None)
+```
+
+## latentgraphrag.evaluation
+
+[Guide](/docs/evaluation). *Top level:* `Reader`, `BrowseCompGrader`, `loose_final`, `retrieval_metrics`.
+
+```python
+class Reader:
+    def __init__(self, llm, max_tokens=8192, followup_max_tokens=512, frequency_penalty=0.4,
+                 context_length=65536, retry_sleep=3.0)
+    def read(self, question, seed=None) -> Trajectory
+
+class BrowseCompGrader:
+    def __init__(self, llm, template=GRADER_TEMPLATE, response="final_line", max_tokens=1024,
+                 attempts=4, retry_sleep=5.0)
+    def grade(self, question, output, gold) -> Verdict
+    def grade_trajectory(self, trajectory, gold) -> Verdict
+
+@dataclass
+class Verdict:
+    correct: bool | None            # None: no verdict, counted as incorrect
+    extracted: str
+    raw: str
+    prompt: str
+    score: float                    # property
+
+loose_list_recall(response, gold) -> float
+loose_final(output, gold) -> float
+final_answer_line(output) -> str
+final_answer_text(output) -> str
+recall_at_k(ranking, gold, k) -> float
+retrieval_metrics(rankings, gold, ks=(1, 5, 10, 20, 50, 100)) -> dict
+```
+
+<PrevNext pathname="/docs/api" />

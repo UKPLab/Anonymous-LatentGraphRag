@@ -131,8 +131,8 @@ export default function DocChip({
                 {doc.kind === "failed"
                   ? "The agent's own fetch failed here, so this is what it actually received."
                   : doc.kind === "unmatched"
-                    ? "This item could not be tied to a corpus document — either a verbalized relational memory, which has no document to point at, or an excerpt we failed to match. Shown verbatim; gold labels do not apply."
-                    : "Shown exactly as given to the model (truncated at 2,000 characters)."}
+                    ? "This item could not be tied to a corpus document, so it is shown verbatim and gold labels do not apply."
+                    : "Shown as stored for the agent: seed documents were truncated to 2,200 characters, search results to 2,000."}
               </p>
             </>
           ) : (

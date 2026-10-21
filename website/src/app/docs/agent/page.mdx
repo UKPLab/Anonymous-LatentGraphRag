@@ -1,0 +1,160 @@
+import PrevNext from "@/components/Docs/PrevNext";
+import ReActDemo from "@/components/Agentic/ReActDemo";
+
+export const metadata = {
+  title: "ReAct Agent · LatentGraphRAG",
+  description: "Retrieval-first seeding of a ReAct agent: seeds, the agent loop, prompt policies, search tools, chat models and trajectories.",
+};
+
+# ReAct agent
+
+In retrieval-first seeding, a retriever's ranking becomes the **initial evidence** of a ReAct agent: the top
+ten documents are shown before the agent's first turn, and the agent may then search on its own. The seed is
+not a search call and does not count against the search budget. `latentgraphrag.agent` is a port of the
+runner behind the paper's agent experiments ([agent results](/#agents)).
+
+```python
+from latentgraphrag import DenseSearchTool, OpenAIChatModel, ReActAgent, Seed
+
+llm = OpenAIChatModel()                                    # Qwen3.5-122B-A10B on localhost:8000
+agent = ReActAgent(llm, DenseSearchTool(embeddings, texts, ids))
+
+seed = Seed.from_ranking(result.ids, documents)            # result: a LatentGraphRAG search result
+trajectory = agent.run(question, seed)
+```
+
+The demo below replays three released trajectories of the paper's agent, one per problem type: the seed, every
+`SEARCH` the agent issued with the five documents it returned, and the graded final answer.
+
+<ReActDemo />
+
+## Seeds
+
+A `Seed` is an ordered list of documents, each with its text and, when known, its id.
+
+| Constructor | Description |
+| --- | --- |
+| `Seed.from_ranking(ranking, texts, k=10, text_cap=2200)` | top `k` of a ranking of document ids; `texts` maps id to text |
+| `Seed.from_texts(texts, ids=None, k=10, text_cap=2200)` | from texts already in rank order |
+| `Seed.empty()` | no initial evidence (the unseeded condition) |
+
+Texts are cut to `text_cap` characters (`None` keeps them whole). `from_ranking` takes document ids; for a
+LatentGraphRAG result pass `result.ids`, not `result.ranking`, which holds `(id, score)` pairs. Any ranking
+works as a seed, so the same agent compares retrievers by swapping only the seed.
+
+## The agent loop
+
+Each turn the controller generates greedily and ends with one action line: a search (`SEARCH: <query>`) or a
+final answer (`Exact Answer: <answer>`).
+
+- A search runs the search tool while searches remain; the results come back as the next user turn.
+- The observation after the last allowed search asks for the final answer.
+- A turn without a valid action (for example, cut at the token limit) receives exactly one follow-up request
+  for a single action line, capped at `followup_max_tokens`.
+- If a prompt exceeds the context window, the call is retried once with the largest `max_tokens` that still
+  fits (at least 1,024 tokens). If it still fails, earlier search results are shortened step by step and the
+  call is repeated (`fit_context=True`).
+
+`seed_placement` decides where the seed appears. `"documents"` (the main protocol) puts it as numbered
+documents in the first user turn. `"search_turn"` presents it as the result of a simulated first search with
+the question as query; that search is not counted.
+
+The prompt texts are shown in the paper (Figures 3 and 4) and live in `latentgraphrag/agent/prompts.py`.
+
+### Parameters
+
+| Parameter | Default | Description |
+| --- | --- | --- |
+| `llm` |  | a chat model (see below) |
+| `search_tool` |  | a search tool; `None` only with `max_searches=0` |
+| `max_searches` | `10` | search budget |
+| `policy` | `"standard"` | prompt policy (see below) |
+| `seed_placement` | `"documents"` | `"documents"` or `"search_turn"` |
+| `max_tokens` | `8192` | generation cap per turn |
+| `followup_max_tokens` | `512` | cap of the follow-up request |
+| `frequency_penalty` | `0.4` | passed to the chat model |
+| `context_length` | `65536` | server context window, used to size the retry after a context error |
+| `fit_context` | `True` | shorten earlier search results when a prompt does not fit |
+| `retry_sleep` | `3.0` | seconds between retries after other errors |
+
+### Policies
+
+`policy` selects the system prompt and the line that follows each observation. `POLICIES` lists all keys.
+
+| Policy | Description |
+| --- | --- |
+| `"standard"` | the main protocol |
+| `"seed_aware"` | answer from the documents; search only when a specific fact is missing |
+| `"read_only"` | answer from the documents without searching (used by the reader) |
+| `"std"`, `"tgt"`, `"tgt_noprefer"`, `"tgt_broad"`, `"std_seed"` | the prompt variants of the agent ablations |
+
+## Search tools
+
+A search tool implements two methods: `start(question, seed)` returns a `SearchContext` for the episode, and
+`search(query, context)` returns a `SearchResult` with the hits shown to the agent and the logged top of the
+live ranking.
+
+**`DenseSearchTool`** is the paper's tool: plain embedding search over a fixed index. The query is encoded,
+scored against the document embeddings by dot product, and the top `k` documents are returned without any
+filtering of documents seen before.
+
+```python
+DenseSearchTool(embeddings, texts, ids=None, query_encoder=None, k=5, text_cap=2000, log_top=1000)
+```
+
+`embeddings` are precomputed, L2-normalized document embeddings of shape `(N, d)`; `texts` are the `N`
+document texts and `ids` their ids (default: positions). The default `query_encoder` is `Qwen3QueryEncoder`,
+loaded on the first search: Qwen3-Embedding-8B with last-token pooling, no instruction, the query cut to 512
+characters and 512 tokens. Any callable `str -> (d,) vector` can replace it, provided it matches the
+encoder of `embeddings`.
+
+**`RankFileFusedSearchTool`** is the fused-tool ablation. For every agent query it fuses the live ranking with
+a fixed ranking of the current question by reciprocal rank fusion, skips documents already shown in the
+episode (seed and earlier results), and returns the top `k`.
+
+```python
+RankFileFusedSearchTool(base, rank_lists, k=5, rrf_offset=61, position_of=None, match_seed_text=True)
+```
+
+`rank_lists` maps a question (whitespace-collapsed, lower-cased) to index positions of `base`, best first.
+`position_of` maps seed document ids to index positions so seed documents count as shown; with
+`match_seed_text`, seed documents without a known id are matched by their text.
+
+## Chat models
+
+The agent, the reader and the grader use any object with a `chat` method:
+
+```python
+def chat(self, messages, *, max_tokens, temperature, frequency_penalty) -> ChatResult: ...
+```
+
+`ChatResult` holds `text`, an optional separate `reasoning`, `finish_reason` and token counts. Errors are
+raised as exceptions; an exceeded context window is recognised by the server's message.
+
+`OpenAIChatModel` talks to an OpenAI-compatible endpoint, for example a local vLLM server:
+
+```python
+OpenAIChatModel(model="Qwen/Qwen3.5-122B-A10B", base_url="http://localhost:8000/v1", api_key="EMPTY",
+                timeout=7200, enable_thinking=False, extra_body=None)
+```
+
+`enable_thinking` is passed as `chat_template_kwargs.enable_thinking`; the paper runs with reasoning disabled.
+The client makes no hidden retries.
+
+## Trajectories
+
+`run` returns a `Trajectory`:
+
+| Field | Description |
+| --- | --- |
+| `question`, `system_prompt`, `seed` | the inputs of the episode |
+| `steps` | one `Step` per turn: the assistant text, the action, the search query, the documents shown and their ids, and diagnostics (finish reason, follow-up, context fitting) |
+| `output` | the last assistant output, which the grader reads |
+| `final_answer` | text after the last `Exact Answer:` to the end of the output, or the whole output without one |
+| `tool_calls` | searches issued; the seed is not counted |
+| `tokens_in`, `tokens_out` | agent tokens over all calls, follow-ups included |
+
+`to_runner_row(...)` gives the row layout of the paper's run files, and `to_trace_record(qid, ...)` the record
+layout of this site's [trajectory viewer](/traces).
+
+<PrevNext pathname="/docs/agent" />

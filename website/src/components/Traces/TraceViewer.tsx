@@ -34,6 +34,7 @@ import {
   datasetLabel,
   docRole,
   readerLabel,
+  TRACE_DATASETS,
   type GoldLabels,
   type RunMeta,
   type SampleSummary,
@@ -41,38 +42,39 @@ import {
   type SeedSetMeta,
   type TraceRecord,
 } from "@/lib/traces";
-import { TRACE_DATASETS, judgeVariability } from "@/data/paperResults";
+import { frozenConfig } from "@/data/lgrPaper";
 import DocChip from "./DocChip";
 import ViewSwitch from "./ViewSwitch";
 
 const TABLE_LABEL: Record<string, string> = {
-  table2: "Retrieve-then-read (Table 2)",
-  table3: "ReAct loop (Table 3)",
-  table15: "Cross-reader (Table 15)",
+  table5: "Shared ReAct agent · Table 5",
+  table4_read: "Read-only answers · Table 4",
+  table4_react: "Standard ReAct, same evidence · Table 4",
 };
+const TABLE_ORDER = ["table5", "table4_read", "table4_react"];
 
 function Verdict({ rec }: { rec: TraceRecord }) {
   if (rec.loose !== null && rec.loose !== undefined) {
     return (
       <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-violet-100 text-violet-800">
-        loose list-recall {(rec.loose * 100).toFixed(0)}%
+        list recall {(rec.loose * 100).toFixed(0)}%
       </span>
     );
   }
   if (rec.correct === null) {
     return (
       <span className="text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-500">
-        not judged
+        not graded
       </span>
     );
   }
   return rec.correct ? (
     <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
-      <Check className="w-3 h-3" /> judged correct
+      <Check className="w-3 h-3" /> graded correct
     </span>
   ) : (
     <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-rose-100 text-rose-800">
-      <X className="w-3 h-3" /> judged incorrect
+      <X className="w-3 h-3" /> graded incorrect
     </span>
   );
 }
@@ -109,8 +111,6 @@ export default function TraceViewer() {
     [runs, runId, ds],
   );
 
-  const PREFERRED = "qwen3_5_122b__latentgraph_dualtree_seed";
-
   // Arriving without a run (e.g. via the Trajectories tab) should land on a real
   // trajectory rather than an empty pane.
   useEffect(() => {
@@ -118,8 +118,8 @@ export default function TraceViewer() {
     const forDs = runs.filter((r) => r.dataset === ds);
     if (forDs.length === 0) return;
     const pick =
-      forDs.find((r) => r.run_id === PREFERRED) ??
-      forDs.find((r) => r.table === "table3") ??
+      forDs.find((r) => r.table === "table5" && r.label.startsWith("LGR (doc. + tri.")) ??
+      forDs.find((r) => r.table === "table5") ??
       forDs[0];
     setParamRef.current({ run: pick.run_id, qid: null });
   }, [runs, ds, runId, seedMethod]);
@@ -206,8 +206,11 @@ export default function TraceViewer() {
       .forEach((r) => {
         (g[r.table] ??= []).push(r);
       });
-    Object.values(g).forEach((l) => l.sort((a, b) => a.label.localeCompare(b.label)));
-    return g;
+    return Object.fromEntries(
+      Object.entries(g).sort(
+        ([a], [b]) => TABLE_ORDER.indexOf(a) - TABLE_ORDER.indexOf(b),
+      ),
+    );
   }, [runs, ds]);
 
   const goldFor = qid ? gold[qid] : undefined;
@@ -306,7 +309,7 @@ export default function TraceViewer() {
                 .length > 0 && (
                 <div>
                   <div className="px-1 pb-1 text-[11px] font-semibold text-gray-400">
-                    Released seed sets (Table 2)
+                    Released seed sets
                   </div>
                   <div className="space-y-0.5">
                     {seedSets
@@ -427,14 +430,14 @@ export default function TraceViewer() {
                   {run.acc === null ? "–" : `${run.acc.toFixed(1)}%`}
                   <span className="ml-2 text-xs font-normal text-gray-500">
                     {run.metric === "loose_list_recall"
-                      ? "loose list-recall"
-                      : "LLM-judged"}
+                      ? "list recall"
+                      : "BrowseComp grader"}
                   </span>
                 </div>
               </div>
               <div>
                 <div className="text-[11px] uppercase tracking-wide text-gray-400">
-                  Mean tool calls
+                  Searches per question
                 </div>
                 <div className="font-semibold text-gray-900">
                   {run.mean_tools === null ? "–" : run.mean_tools.toFixed(2)}
@@ -446,12 +449,11 @@ export default function TraceViewer() {
                 </div>
                 <div className="font-semibold text-gray-900">{run.n}</div>
               </div>
-              {run.judge_passes && run.judge_passes > 1 && (
-                <div className="text-xs text-gray-500 self-end">
-                  This run was judged {run.judge_passes}× (spread{" "}
-                  {run.acc_spread}pt). The per-sample verdicts below come from
-                  one pass; the paper reports the {judgeVariability.passes}-pass
-                  mean.
+              {run.table === "table5" && (
+                <div className="text-xs text-gray-500 self-end max-w-md">
+                  Table 5 reports the mean over repeated runs; these
+                  trajectories are one of them, so the run score above can
+                  differ slightly from the printed mean.
                 </div>
               )}
             </div>
@@ -542,11 +544,14 @@ export default function TraceViewer() {
                 <div className="rounded-xl border border-gray-200 p-4">
                   <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2 mb-1">
                     <Sparkles className="w-4 h-4 text-blue-500" />
-                    Injected seed — top {rec.seed.length}
+                    {run?.mode === "read"
+                      ? `Evidence given to the reader — top ${rec.seed.length}`
+                      : `Injected seed — top ${rec.seed.length}`}
                   </h3>
                   <p className="text-xs text-gray-500 mb-3">
-                    Placed in the first user turn before the agent acts. It does
-                    not count as a tool call.
+                    {run?.mode === "read"
+                      ? "The reader answers from these documents alone, with an answer-only prompt; it cannot search."
+                      : "Placed in the first user turn before the agent acts. It does not count as a search."}
                   </p>
                   <div className="space-y-1.5">
                     {rec.seed.map((did, i) => (
@@ -565,7 +570,7 @@ export default function TraceViewer() {
               {rec.traj.length > 0 && (
                 <div className="space-y-3">
                   <h3 className="text-sm font-semibold text-gray-900">
-                    Agent trajectory — {rec.traj.length}{" "}
+                    {run?.mode === "read" ? "Reader output" : "Agent trajectory"} — {rec.traj.length}{" "}
                     {rec.traj.length === 1 ? "step" : "steps"}
                   </h3>
                   {rec.traj.map((st, i) => (
@@ -637,6 +642,14 @@ export default function TraceViewer() {
                         ),
                       )}
 
+                      {st.fx && (
+                        <div className="px-4 py-2 border-t border-amber-100 bg-amber-50/60 text-xs text-amber-900">
+                          <span className="font-semibold">Forced follow-up.</span>{" "}
+                          The turn had no usable action line, so the agent received
+                          one follow-up request for exactly one action line.
+                        </div>
+                      )}
+
                       {st.err && (
                         <div className="px-4 py-2 border-t border-rose-100 bg-rose-50/60 text-xs text-rose-800 font-mono">
                           {st.err}
@@ -664,25 +677,31 @@ export default function TraceViewer() {
               <div className="rounded-xl border-2 border-violet-300 bg-violet-50 p-4">
                 <div className="text-[11px] uppercase tracking-wide text-violet-700 mb-1 flex items-center gap-1.5">
                   <Gavel className="w-3.5 h-3.5" />
-                  Judge
+                  Grade
                 </div>
                 {rec.loose !== null && rec.loose !== undefined ? (
                   <p className="text-violet-950 text-sm">
-                    Scored by loose list-recall, not by a model:{" "}
-                    <strong>{(rec.loose * 100).toFixed(1)}%</strong> of the gold
-                    list recovered.
+                    Scored by loose list recall on the answer text, not by a
+                    model: <strong>{(rec.loose * 100).toFixed(1)}%</strong> of the
+                    gold list recovered.
                   </p>
                 ) : rec.correct === null ? (
                   <p className="text-violet-950/70 text-sm italic">
-                    This run was never judged, so no verdict is available. It is
-                    not counted as incorrect.
+                    No verdict is available for this answer.
                   </p>
                 ) : (
-                  <p className="text-violet-950 text-sm">
-                    Qwen3.5-27B judged this answer{" "}
-                    <strong>{rec.correct ? "correct" : "incorrect"}</strong>
-                    {rec.judge ? ` — “${rec.judge}”` : ""}.
-                  </p>
+                  <div className="text-violet-950 text-sm space-y-2">
+                    <p>
+                      The BrowseComp grader ({frozenConfig.controller},
+                      temperature 0) graded the final answer{" "}
+                      <strong>{rec.correct ? "correct" : "incorrect"}</strong>.
+                    </p>
+                    {rec.judge && (
+                      <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-violet-900/80">
+                        {rec.judge}
+                      </pre>
+                    )}
+                  </div>
                 )}
               </div>
             </div>

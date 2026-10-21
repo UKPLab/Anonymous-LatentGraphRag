@@ -1,0 +1,186 @@
+import PrevNext from "@/components/Docs/PrevNext";
+
+export const metadata = {
+  title: "Retrieval · LatentGraphRAG",
+  description: "Two recursive trees on Recursive Dense Retrieval, projection of memory scores to source documents, view fusion, the paper's configuration and the ablation views.",
+};
+
+# Retrieval
+
+`LatentGraphRAG` runs Recursive Dense Retrieval (RDR; Anonymous, 2026) over two indices and returns one
+ranking of source documents:
+
+1. The **document tree** searches the documents with RDR's tree and global readout.
+2. The **memory tree** searches the memories with the same encoder, recursive update and readout; its
+   children are selected by maximal marginal relevance.
+3. The memory readout is **projected** onto the documents that supplied the memories.
+4. The document view and the projected memory view are **fused** into one document ranking.
+
+RDR's search strategies, readouts and encoder options are documented on the
+[RDR project page](https://anonymous.4open.science/w/Recursive-Dense-Retrieval).
+
+## Building an index
+
+```python
+from latentgraphrag import PAPER, LatentGraphRAG
+
+lgr = LatentGraphRAG("path/to/rdr-checkpoint", config=PAPER)
+index = lgr.build(documents, inventory, cache_dir="cache/my-corpus")
+```
+
+`LatentGraphRAG(model, config=PAPER, **rdr_kwargs)` takes an RDR checkpoint (path or model id) or any encoder
+object RDR's `RecursiveRetriever` accepts. Further keyword arguments (devices, batch sizes, dtype) go to
+`RecursiveRetriever` unchanged.
+
+`build(documents, inventory=None, groups=None, cache_dir=None, show_progress_bar=True)` encodes the documents
+and the memories once and returns an `LGRIndex`:
+
+| Argument | Description |
+| --- | --- |
+| `documents` | document texts, or `{document id: text}` |
+| `inventory` | a `MemoryInventory` whose sources are document ids; `None` builds a documents-only index |
+| `groups` | for a chunked corpus, the document id of every chunk (see below) |
+| `cache_dir` | embedding caches, in `documents/` and `memories/` below it |
+
+The returned `LGRIndex` holds `documents` and `memories` (RDR dense indices), the `inventory`, and `doc_of`,
+the document id at every position of the document index. `index.joint()` builds the joint index of the
+ablation from the existing embeddings, without encoding anything again.
+
+### Chunked corpora
+
+When documents are split into chunks, pass the chunks as `documents` and their document ids as `groups`
+(one id per chunk). The document tree then searches chunks, and a document scores the maximum over its chunks
+among the readout's top units. Inventory sources are document ids in this case, not chunk ids.
+
+```python
+chunks = [c.text for c in all_chunks]
+groups = [c.document_id for c in all_chunks]
+index = lgr.build(chunks, inventory, groups=groups)
+```
+
+## Searching
+
+```python
+results = lgr.search(questions, index, k=10)            # view="D+M"
+r = results[0]
+r.ranking         # [(document id, score), ...], best first
+r.ids             # [document id, ...]
+r.views           # {"D": {...}, "M": {...}}: the views before fusion
+r.document_view   # same as r.views["D"]
+r.memory_view     # same as r.views["M"], already projected to documents
+```
+
+`search(queries, index, k=10, view="D+M", instruction=None)` returns one `LGRResult` per query. `k=None`
+returns every ranked document. `instruction` replaces the root instruction (default: RDR's multi-hop
+instruction).
+
+## Views
+
+`view` selects which trees run and how they are combined. The views are the variants compared in the paper's
+ablation tables ([Tables 13 and 14](/#ablations)).
+
+| `view` | Trees | Result |
+| --- | --- | --- |
+| `"D+M"` | document tree and memory tree | fused ranking (the paper's configuration) |
+| `"D"` | document tree | documents only |
+| `"M"` | memory tree | memory view alone, projected to documents |
+| `"J"` | one tree over a joint index of documents and memories | documents and projected memories, maximum per document |
+| `"D+J"` | document tree and joint tree | the document view fused with the joint view |
+
+The paper's configurations differ only in the inventory and the view:
+
+| Configuration | Inventory | `view` |
+| --- | --- | --- |
+| LGR (doc. only) | none | `"D"` |
+| LGR (doc. + tri.) | `inventory.select("triple")` | `"D+M"` |
+| LGR (doc. + tri. + prop.) | `MemoryInventory.union(tri, pro)` | `"D+M"` |
+
+Views that need memories raise an error on an index built without an inventory.
+
+## The memory tree
+
+Constructed units are short and often near-duplicates: the same fact as a triple and as a proposition, or the
+same relation extracted from several passages. The memory tree therefore selects each state's children by
+**maximal marginal relevance** instead of top score. A state takes the `mmr_pool × branching` best units not
+selected at earlier levels and greedily adds the unit that maximises
+`λ · score − (1 − λ) · redundancy`, where the redundancy is the largest dot product with a unit it has
+already picked. The first pick is the top-scoring unit.
+
+Everything else is RDR's tree unchanged: one level at a time, units chosen at earlier levels are excluded,
+and a unit chosen by several parents becomes one child on its best path. The search is available on its own
+as `MMRTreeSearch(depth, branching, lam, pool)`, a subclass of RDR's `TreeSearch`; `bind(index)` gives it the
+unit embeddings for the redundancy term. `memory_mmr=False` switches the memory tree to RDR's plain tree.
+
+## Projection and fusion
+
+**Projection** turns the memory view into a document view. With `projection="max"` (the paper's choice), a
+document receives the largest score of the retrieved memories it supplied, and zero when none of them did:
+
+```text
+r_{M→D}(d) = max over memories m with d ∈ π(m) of r_M(m)
+```
+
+**Fusion** combines views over the same document ids. With `fusion="combmnz"` (the paper's choice), a document
+scores the weighted sum of its view scores times the number of views that contain it. The paper weighs the
+document view with 1 and the memory view with 0.5. Readout scores are fused as they are, without
+normalisation: both views come from the same readout.
+
+| `projection` | Document score from its memories' scores `r` |
+| --- | --- |
+| `"max"` | `max r` (paper) |
+| `"sum"` | `Σ r` |
+| `"mean"` | mean of `r` |
+| `"pmax2"`, `"pmax4"` | soft maximum `(Σ r^Q)^(1/Q)` with Q = 2 or 4 |
+| `"noisy_or"` | `1 − Π (1 − r)` |
+
+| `fusion` | Fused score of a document |
+| --- | --- |
+| `"combmnz"` | `Σ_v w_v · s_v(d)` times the number of views containing `d` (paper) |
+| `"combsum"` | `Σ_v w_v · s_v(d)` |
+| `"z"` | `Σ_v w_v · z_v(d)`: z-agreement, per-view z-scores; a document missing from a view takes that view's minimum |
+| `"rrf"` | `Σ_v w_v / (rrf_k + rank_v(d))`, ranks from 1 |
+| `"max"` | largest score of any view (weights ignored) |
+
+Both are plain functions over `{id: score}` mappings and work on any views, e.g. rankings computed elsewhere:
+
+```python
+from latentgraphrag import fuse, project, rank
+
+doc_view = {"d1": 0.41, "d2": 0.30}
+mem_scores = {0: 0.52, 1: 0.10}                      # memory position -> score
+mem_view = project(mem_scores, {0: ["d2"], 1: ["d3"]}, reduce="max")
+fused = fuse([doc_view, mem_view], [1.0, 0.5], method="combmnz")
+rank(fused, k=10)                                    # ['d2', 'd1', 'd3']
+```
+
+## Configuration
+
+`LGRConfig` holds the settings of both trees, their readouts and the fusion. `PAPER` is the instance behind
+every LatentGraphRAG row of the paper; `with_(...)` returns a modified copy.
+
+```python
+from latentgraphrag import PAPER, LatentGraphRAG
+
+lgr = LatentGraphRAG(checkpoint, config=PAPER.with_(fusion="rrf"))
+lgr = LatentGraphRAG(checkpoint, config=PAPER.with_(projection="sum", memory_weight=1.0))
+```
+
+| Field | `PAPER` | Description |
+| --- | --- | --- |
+| `depth` | `4` | encoded levels per tree, including the root |
+| `branching` | `3` | children per state in the document tree |
+| `memory_branching` | `3` | children per state in the memory tree |
+| `memory_mmr` | `True` | select memory children by maximal marginal relevance |
+| `mmr_lambda` | `0.5` | relevance weight λ of the MMR objective |
+| `mmr_pool` | `5` | MMR chooses among the `mmr_pool × branching` best unselected units |
+| `joint_branching` | `3` | children per state in the joint tree (top-score selection) |
+| `temperature` | `0.02` | softmax temperature of the global readout (RDR's default is 0.05) |
+| `top_k` | `200` | units each state contributes to the readout, and units each view passes to fusion |
+| `projection` | `"max"` | memory scores to document scores |
+| `fusion` | `"combmnz"` | view fusion |
+| `document_weight` | `1.0` | weight of the document view |
+| `memory_weight` | `0.5` | weight of the projected memory view, and of the joint view |
+| `rrf_k` | `60` | rank offset of `"rrf"` |
+| `observation_max_tokens` | `512` | token cap per observed unit in a query state |
+
+<PrevNext pathname="/docs/retrieval" />

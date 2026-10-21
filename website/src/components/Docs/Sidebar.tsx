@@ -6,26 +6,19 @@ import { useEffect, useState } from "react";
 import { docsNav, DocSection } from "@/lib/docsNav";
 
 /**
- * Sidebar with collapsible sections.
- *
- * Sections containing the active page are auto-expanded. Other sections start
- * collapsed, keeping deep groups (Tutorial, API Reference) tucked away until
- * a reader actually wants them.
+ * Sidebar with collapsible sections. The docs are short, so every section starts
+ * expanded; a reader can still collapse one.
  */
 function sectionContainsPath(section: DocSection, pathname: string): boolean {
   return section.items.some((it) => it.href === pathname);
 }
 
 export default function Sidebar() {
-  const pathname = usePathname() ?? "";
-  const [expanded, setExpanded] = useState<Record<string, boolean>>(() => {
-    // First render uses pathname snapshot to seed which sections start open.
-    const out: Record<string, boolean> = {};
-    for (const s of docsNav) {
-      out[s.title] = sectionContainsPath(s, pathname);
-    }
-    return out;
-  });
+  // trailingSlash: true makes the pathname "/docs/quickstart/"; nav hrefs have no trailing slash.
+  const pathname = (usePathname() ?? "").replace(/(.)\/$/, "$1");
+  const [expanded, setExpanded] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(docsNav.map((s) => [s.title, true])),
+  );
 
   // Auto-open the section that owns the currently active page on navigation.
   useEffect(() => {

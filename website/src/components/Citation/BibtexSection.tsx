@@ -2,12 +2,13 @@
 
 import { motion } from "framer-motion";
 
-const BIBTEX = `@article{anonymous2026latentgraphrag,
-  title={{LatentGraphRAG}: Overcoming the Missing-Edge Problem
-         with Memory-Enriched Recursive Dense Retrieval},
-  author={Anonymous ACL Submission},
-  year={2026},
-  url={#}
+import { paperMeta } from "@/data/lgrPaper";
+
+const [SHORT, REST] = paperMeta.title.split(/:\s+/);
+const BIBTEX = `@misc{anonymous_latentgraphrag,
+  title={{${SHORT}}: ${REST}},
+  author={Anonymous},
+  note={${paperMeta.venue}}
 }`;
 
 export default function BibtexSection() {

@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { paperMeta } from "@/data/lgrPaper";
+import { claim } from "@/components/PaperTables/claims";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -12,29 +14,30 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const DESCRIPTION = `${claim("doc-only-beats-graph")} ${claim("agent-search-reduction")}`;
+
 export const metadata: Metadata = {
-  title: "LatentGraphRAG: Overcoming the Missing-Edge Problem in Knowledge Graphs with Recursive Dense Retrieval",
-  description: "LatentGraphRAG retrieves documents and verbalized relational memories as two complementary views through recursive dense retrieval, overcoming the missing-edge problem in knowledge graphs. Best mean Recall on MuSiQue, FanOutQA and BrowseComp+, and 2.7x fewer agent search calls downstream. All evaluation trajectories released.",
+  title: paperMeta.title,
+  description: DESCRIPTION,
   keywords: [
     "LatentGraphRAG",
-    "GritHopper",
-    "relational memories",
-    "latent graph",
-    "knowledge graphs",
-    "dense retrieval",
-    "RAG",
+    "Recursive Dense Retrieval",
+    "multi-hop retrieval",
+    "graph-based retrieval",
+    "triples",
+    "propositions",
+    "source-level fusion",
+    "CombMNZ",
     "MuSiQue",
     "FanOutQA",
     "BrowseComp+",
-    "document-memory agreement",
-    "recursive dense retrieval",
-    "agentic RAG",
+    "retrieval-first RAG",
     "ReAct",
   ],
   // authors withheld: anonymous ACL ARR submission under review
   openGraph: {
-    title: "LatentGraphRAG: Overcoming the Missing-Edge Problem in Knowledge Graphs with Recursive Dense Retrieval",
-    description: "Multi-hop retrieval over documents and relational memories. Best mean R@5 (44.65) and R@10 (54.26) across MuSiQue, FanOutQA and BrowseComp+, and 2.7x fewer agent search calls when used as a one-shot seed.",
+    title: paperMeta.title,
+    description: DESCRIPTION,
     type: "website",
   },
 };

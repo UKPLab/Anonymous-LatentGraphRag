@@ -6,7 +6,7 @@ import TraceViewer from "@/components/Traces/TraceViewer";
 export const metadata: Metadata = {
   title: "Trajectory viewer — LatentGraphRAG",
   description:
-    "Browse every evaluation trajectory: injected seed, reasoning and observation steps, retrieved documents with gold labels, final answer and judge verdict.",
+    "Browse the agent and reader trajectories: injected seed, reasoning and search steps, retrieved documents with gold labels, final answer and grade.",
 };
 
 export default function TraceResultsPage() {

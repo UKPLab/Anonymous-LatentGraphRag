@@ -13,7 +13,9 @@ export const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 
 const dataUrl = (p: string) => `${BASE_PATH}/data/${p}`;
 
-export type TableKey = "table3" | "table15" | "table16";
+/** Which paper table a run belongs to: the shared ReAct agent (Table 5), the read-only
+ * rows of Table 4, or the matched ReAct rows of Table 4's lower block. */
+export type TableKey = "table5" | "table4_read" | "table4_react";
 
 export interface RunMeta {
   run_id: string;
@@ -35,6 +37,10 @@ export interface RunMeta {
   acc_spread: number | null;
   metric: "loose_list_recall" | "llm_judge";
   unjudged?: boolean;
+  /** "read": the reader answers from the seed alone; "react": the agent may search */
+  mode?: "read" | "react";
+  /** run directory in the evaluation suite the trajectories were exported from */
+  source_dir?: string;
 }
 
 /** One row of a run's sample list - enough to render the list without shards. */
@@ -71,6 +77,8 @@ export interface TrajectoryStep {
   calls?: TrajectoryCall[];
   /** a generation error recorded for this step */
   err?: string | null;
+  /** set when the step needed the forced follow-up request for exactly one action line */
+  fx?: string | null;
 }
 
 export interface TraceRecord {
@@ -93,7 +101,7 @@ export interface CorpusDoc {
   t: string;
   /** date */
   d: string;
-  /** the text as it was shown to the model (2,000 chars) */
+  /** the text as stored for the agent: seed documents at 2,200 characters, search results at 2,000 */
   x: string;
   /**
    * Absent for corpus documents. "unmatched" is a retrieved item we could not
@@ -191,9 +199,7 @@ export async function loadDoc(
 /* ------------------------------------------------------------------ helpers */
 
 export const READER_LABELS: Record<string, string> = {
-  qwen3_5_9b: "Qwen3.5-9B",
-  qwen3_5_27b: "Qwen3.5-27B",
-  qwen3_5_122b: "Qwen3.5-122B",
+  qwen3_5_122b: "Qwen3.5-122B-A10B",
 };
 
 export const DATASET_LABELS: Record<string, string> = {
@@ -203,6 +209,17 @@ export const DATASET_LABELS: Record<string, string> = {
 };
 
 export const readerLabel = (k: string) => READER_LABELS[k] ?? k;
+
+/**
+ * Datasets whose trajectories are released. BrowseComp+ is withheld: its authors ask that
+ * the benchmark never appear as plain text online, so it has numbers but no traces.
+ */
+export const TRACE_DATASETS = [
+  { key: "musique", label: "MuSiQue", n: 1000 },
+  { key: "fanoutqa", label: "FanOutQA", n: 310 },
+] as const;
+
+export type DatasetKey = (typeof TRACE_DATASETS)[number]["key"];
 export const datasetLabel = (k: string) => DATASET_LABELS[k] ?? k;
 
 /** How a document relates to the question, for gold / evidence highlighting. */

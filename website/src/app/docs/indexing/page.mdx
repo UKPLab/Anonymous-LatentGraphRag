@@ -1,0 +1,131 @@
+import PrevNext from "@/components/Docs/PrevNext";
+import IndexingFlow from "@/components/Docs/IndexingFlow";
+import { CodePanel } from "@/components/Docs/CodeShowcase";
+import {
+  IDX_AGENT,
+  IDX_AGENT_INDEX,
+  IDX_CORPUS,
+  IDX_ENCODE,
+  IDX_EXTRACT,
+  IDX_INVENTORY,
+  IDX_LAYOUT,
+  IDX_LOAD_KNOWLEDGE,
+  IDX_MEMORIES_FILE,
+  IDX_REUSE,
+} from "@/components/Docs/snippets";
+
+export const metadata = {
+  title: "Index a corpus, save, reuse · LatentGraphRAG",
+  description: "From a document corpus to a saved LatentGraphRAG index: construct triples and propositions, encode once, save, load later, search and seed the ReAct agent.",
+};
+
+# Index a corpus, save, reuse
+
+This page goes from a document corpus to a ranking that seeds the ReAct agent, with every intermediate result
+on disk: the constructed knowledge as `memories.jsonl`, the encoded index as a directory. Encoding runs once
+per corpus; afterwards the index is loaded and searched without encoding the corpus again.
+
+<IndexingFlow />
+
+## 1. The corpus
+
+The corpus is a dict `{document id: text}`. Ids are strings or integers (a saved index stores them as JSON);
+every ranking the package returns is a list of these ids.
+
+<CodePanel code={IDX_CORPUS} />
+
+A **chunked corpus** keeps one entry per chunk and passes `groups`, the document id of every chunk in order,
+to `lgr.build`. A document's score is then the maximum over its chunks among the readout's top units, and
+memory sources must be the document ids in `groups`. See [Retrieval](/docs/retrieval#chunked-corpora).
+
+## 2. Constructed knowledge
+
+Memories are triples and propositions, each with the list of documents it was extracted from (π). They are
+either extracted here or loaded from existing extraction output.
+
+### Extract
+
+`triples.extract_with_hipporag` runs HippoRAG's OpenIE, `propositions.extract_with_proprag` runs PropRAG's own
+extraction; both call an OpenAI-compatible endpoint and cache the LLM calls in `save_dir`. Passing
+`{document id: text}` makes each record's `idx` the document id, so `from_openie` and `from_records` need no
+mapping.
+
+<CodePanel code={IDX_EXTRACT} />
+
+PropRAG is not installed by any extra: `proprag_root` is the root of a local checkout. The model names above
+are the ones the paper used for FanOutQA and BrowseComp+; any served model works. Details are on the
+[Knowledge construction](/docs/construction) page.
+
+### Or load existing output
+
+HippoRAG-format OpenIE files and PropRAG output key their records by chunk id,
+`"chunk-" + md5(title + "\n" + text)`. `chunk_id(title, text)` computes it, and `source_of` maps it to your
+document ids; records it does not know are skipped.
+
+<CodePanel code={IDX_LOAD_KNOWLEDGE} />
+
+### One inventory, saved
+
+`MemoryInventory.union` puts both kinds into one memory index and merges the provenance of memories that occur
+in several documents. Save it once; extraction does not have to run again.
+
+<CodePanel code={IDX_INVENTORY} />
+
+`memories.jsonl` holds one record per memory; `sources` are document ids:
+
+<CodePanel code={IDX_MEMORIES_FILE} title="memories.jsonl" lang="json" />
+
+`inventory.select("triple")` or `select("proposition")` builds a documents + triples or documents +
+propositions index from the same file.
+
+## 3. Encode once and save
+
+`lgr.build` encodes the documents and the memory texts with the RDR checkpoint and returns an `LGRIndex`;
+`index.save` writes it to a directory.
+
+<CodePanel code={IDX_ENCODE} />
+
+`cache_dir` writes the embeddings to `cache_dir/documents` and `cache_dir/memories` while encoding; a later
+`build` with the same `cache_dir` loads them instead of encoding again. The cache is not checked against the
+texts or the model, so use one directory per corpus and checkpoint. Without an inventory,
+`lgr.build(documents)` builds a documents-only index.
+
+### The saved index
+
+<CodePanel code={IDX_LAYOUT} title="lgr_index/" lang="text" />
+
+Embeddings are stored as float16. `documents/` and `memories/` are plain RDR indices
+(`rdr.DenseIndex.save`), so RDR can load each of them on its own.
+
+## 4. Load and search
+
+Later, in another process, create the retriever with the same checkpoint and load the directory.
+`load_index` puts the vectors on the retriever's index device; `LGRIndex.load(path, device=None, dtype=None)`
+chooses device and dtype explicitly (default: float16 on GPU, float32 on CPU).
+
+<CodePanel code={IDX_REUSE} />
+
+`search` takes a batch of questions and returns one `LGRResult` per question. Only the query states are
+encoded at search time. `view="D"` is the documents-only configuration; the other views (`"M"`, `"J"`,
+`"D+J"`) are on the [Retrieval](/docs/retrieval#views) page.
+
+## 5. Seed the ReAct agent
+
+The top ten documents of a ranking become the agent's initial evidence. The agent then searches on its own,
+with a separate, plain embedding index over the same documents: `DenseSearchTool(embeddings, texts, ids=None,
+query_encoder=None, k=5, text_cap=2000, log_top=1000)`.
+
+<CodePanel code={IDX_AGENT} />
+
+The tool scores documents by the dot product with the query vector. Its default query encoder,
+`Qwen3QueryEncoder`, is Qwen3-Embedding-8B with last-token pooling and no instruction, so the document
+embeddings must be L2-normalised embeddings of the same model, in the order of `ids`. The package does not
+encode them; for example, with sentence-transformers:
+
+<CodePanel code={IDX_AGENT_INDEX} />
+
+Another encoder works as well when its query side is passed as `query_encoder` (any `str -> (d,)` vector). To
+keep the trajectories, `trajectory.to_runner_row(...)` gives the row layout of the paper's run files. The agent
+loop, its parameters and the prompts are on the [ReAct agent](/docs/agent) page.
+
+<PrevNext pathname="/docs/indexing" />

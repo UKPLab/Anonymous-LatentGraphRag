@@ -1,0 +1,68 @@
+import PrevNext from "@/components/Docs/PrevNext";
+import FrozenConfigTable, { BenchmarkTable } from "@/components/Docs/FrozenConfigTable";
+
+export const metadata = {
+  title: "Reproducing the Paper · LatentGraphRAG",
+  description: "The paper's frozen configuration in the package, the knowledge inventories per benchmark, the parity test against the paper's evaluator, and the published trajectories.",
+};
+
+# Reproducing the paper
+
+Every LatentGraphRAG row of the paper uses one frozen configuration. In the package it is `PAPER`, the
+default of `LatentGraphRAG`, and the defaults of the agent, the reader and the grader are the paper's
+settings. Nothing needs to be set to reproduce the main configuration.
+
+## The frozen configuration
+
+<FrozenConfigTable />
+
+The ablation tables vary one part at a time: the view with `search(..., view=...)`, the fusion operator with
+`PAPER.with_(fusion=...)`, the projection with `PAPER.with_(projection=...)`. The variants and their results
+are in [Tables 13 and 14](/#ablations); the mapping from table rows to settings is on the
+[Retrieval](/docs/retrieval#views) page.
+
+## Knowledge inventories
+
+LatentGraphRAG reuses the units the graph baselines construct. Triples and propositions of a benchmark form
+one memory index (`MemoryInventory.union`), each memory linked to the documents it was extracted from.
+
+<BenchmarkTable />
+
+## Parity with the paper's evaluator
+
+The paper's retrieval numbers were computed with a research evaluator that re-implements RDR. `tests/parity`
+runs that evaluator and this package side by side and requires **identical rankings**:
+
+- for every view: documents (`D`), memories (`M`), the joint index (`J`), and the fusions `D+M` and `D+J`;
+- for every fusion operator and for the `max` and `sum` projections;
+- on flat and on chunked corpora.
+
+Both run on a synthetic corpus with one deterministic fake encoder that hashes the exact text it receives.
+Any difference in how a query state is rendered (instruction, observation layout, truncation) therefore
+changes the vectors and fails the test, so the test also checks that both produce identical query states. The
+model weights are the only part it does not exercise.
+
+The evaluator is not part of the repository. Point `LGR_EVALUATOR` at its file to run the test; without it the
+test is skipped.
+
+```bash
+pytest tests                                              # unit, agent and evaluation tests
+LGR_EVALUATOR=/path/to/evaluator.py pytest tests/parity   # parity with the paper's evaluator
+```
+
+## Agents and grading
+
+`ReActAgent`, `Reader` and `BrowseCompGrader` are ports of the paper's runners with their defaults set to the
+paper's protocol: the prompts, at most ten searches returning five texts of at most 2,000 characters, one
+follow-up request after a turn without an action, context fitting, and grading of the final answer line.
+Seeds hold the top ten documents of a ranking, each cut to 2,200 characters. The agent's search tool expects
+precomputed document embeddings of its index.
+
+## Trajectories
+
+The [trajectory viewer](/traces) shows the agent runs behind the paper's agent tables for MuSiQue and FanOutQA,
+one run per condition. BrowseComp+ trajectories are not published, since BrowseComp asks that its questions
+and answers not appear online in plain text. `Trajectory.to_trace_record` writes the viewer's record format,
+and `reproduce/export_traces.py` converts run files into the viewer's payload.
+
+<PrevNext pathname="/docs/reproduce" />

@@ -5,7 +5,7 @@ import TracesOverview from "@/components/Traces/TracesOverview";
 export const metadata: Metadata = {
   title: "Trajectories — LatentGraphRAG",
   description:
-    "Every evaluation trajectory behind the paper: ReAct loops, cross-reader and cross-retriever runs, with the retrieved documents and the judge verdict for all samples.",
+    "The trajectories behind the paper's reader and agent tables: starting evidence, every search with what it returned, the final answer and its grade, for all MuSiQue and FanOutQA samples.",
 };
 
 export default function TracesPage() {

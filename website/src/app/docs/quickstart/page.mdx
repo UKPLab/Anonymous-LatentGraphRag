@@ -1,126 +1,113 @@
 import PrevNext from "@/components/Docs/PrevNext";
+import ReActDemo from "@/components/Agentic/ReActDemo";
 
 export const metadata = {
   title: "Quickstart · LatentGraphRAG",
-  description: "Build a graph, retrieve, and evaluate in under five minutes.",
+  description: "From constructed knowledge to a graded answer: build a memory inventory, retrieve with two recursive trees, seed a ReAct agent and grade it.",
 };
 
 # Quickstart
 
-This page walks through the smallest useful end-to-end loop: index five documents, build
-a relational-memory graph, and run a strong dual-tree retrieval configuration. No
-training required; the encoder and OpenIE LLM are both off-the-shelf.
+This page runs the whole pipeline once: constructed knowledge with provenance, retrieval with two recursive
+trees, a seeded ReAct agent, and grading. Each step has its own guide.
 
-## 1. Set your API key
+You need:
 
-LatentGraphRAG uses an OpenAI-compatible API for OpenIE (entity + triple extraction) and
-verbalization. Anything that speaks the Chat Completions API works — OpenAI, Azure
-OpenAI, or a local vLLM server. Set the key:
+- `documents`: the corpus as `{document id: text}`.
+- Constructed knowledge: a HippoRAG-format OpenIE file (triples) and/or a PropRAG output file (propositions).
+  Both are keyed by chunk id; `chunk_to_doc` maps a chunk id to the document id it belongs to.
+- An RDR checkpoint, and an OpenAI-compatible chat endpoint for the agent.
 
-```bash
-export OPENAI_API_KEY="sk-..."
-```
-
-## 2. Build the graph
-
-```python title="build_index.py"
-import latentgraphrag as lgr
-
-documents = [
-    "Alice lives in Paris. She is a researcher at the Sorbonne.",
-    "Bob knows Alice and works in Berlin at a robotics startup.",
-    "Charlie travels often between Paris and Berlin for his job.",
-    "Dora is a close friend of Alice and Bob since university.",
-    "The cafe Procope in Paris is famous for its croissants and history.",
-]
-
-rag = lgr.LatentGraphRAG(
-    encoder="GritHopper-7B",
-    openie_llm="gpt-4o-mini",
-    verbalizer_llm="gpt-4o-mini",
-)
-
-rag.build_graph(documents=documents, save_dir="./my_corpus")
-```
-
-When `build_graph` returns, `./my_corpus/` contains the relational-memory graph (igraph
-binary), parquet files for chunks and memories, FAISS indices, and a manifest.
-
-> **Larger corpus? Use vLLM** to host OpenIE locally with batched, prefix-cached inference:
-> ```python
-> from latentgraphrag.llm.vllm import VLLMOffline
-> llm = VLLMOffline("meta-llama/Llama-3.3-70B-Instruct", gpu_memory_utilization=0.8)
-> rag = lgr.LatentGraphRAG(encoder="GritHopper-7B", openie_llm=llm, verbalizer_llm=llm)
-> ```
-
-## 3. Retrieve
-
-The retrieval API factors into three orthogonal axes — **corpus**, **search**, **fusion**.
-A strong default configuration:
-
-```python title="retrieve.py"
-results = rag.retrieve(
-    queries=["Where does Alice live?", "Who works in Berlin?"],
-    corpus="dual_tree",          # search both documents and relational memories
-    search="full_expansion",      # b-ary tree over hops 1..H
-    fusion="agreement",           # combine doc & memory views by score agreement
-    branching_doc=3,
-    branching_memory=5,
-    max_hops=4,
-    gamma=0.0,
-    k=10,
-)
-
-for r in results:
-    print(r.query)
-    for doc_id, score in zip(r.documents[:3], r.scores[:3]):
-        print(f"  {score:.3f}  {doc_id}")
-```
-
-## 4. Try other combinations
+## 1. Constructed knowledge
 
 ```python
-# Document-only iterative search (the strong single-modality baseline)
-rag.retrieve(queries, corpus="document_only", search="full_expansion", branching=3, max_hops=4)
+from latentgraphrag import MemoryInventory, chunk_id, propositions, triples
 
-# Memory-only over the verbalized triplets
-rag.retrieve(queries, corpus="memory_only", search="full_expansion", branching=3, max_hops=4)
+# The OpenIE caches key passages by "chunk-" + md5(title + "\n" + text).
+chunk_to_doc = {chunk_id(title, text): doc_id for doc_id, (title, text) in titled_passages.items()}
 
-# BeamDR-style pruning instead of full expansion
-rag.retrieve(queries, corpus="document_only", search="beamdr", beam_width=10, max_hops=4)
+tri = triples.from_openie(triples.load_openie("openie.jsonl.gz"), source_of=chunk_to_doc)
+pro = propositions.from_records(propositions.load_records("proprag_openie.json"), source_of=chunk_to_doc)
+inventory = MemoryInventory.union(tri, pro)   # one memory index, provenance merged
 
-# Cross-view beam — one beam, two indices queried each step
-rag.retrieve(queries, corpus="dual_tree", search="cross_view_beam", beam_width=10, max_hops=4)
+inventory.stats()   # {"memories": ..., "triple": ..., "proposition": ..., "sources": ...}
 ```
 
-See the [Concepts overview](/docs/concepts/overview) for the full grid of valid
-combinations.
+Each triple becomes the literal sentence `"head relation tail."`; each memory keeps the list of documents it
+was extracted from. See [Knowledge construction](/docs/construction).
 
-## 5. Round-trip and evaluate
+## 2. Retrieval
 
-```python title="evaluate.py"
-import latentgraphrag as lgr
-from latentgraphrag.evaluation import recall_at_k
+```python
+from latentgraphrag import PAPER, LatentGraphRAG
 
-# Re-open from disk in a fresh process.
-rag = lgr.LatentGraphRAG.load("./my_corpus")
+lgr = LatentGraphRAG("path/to/rdr-checkpoint", config=PAPER)
+index = lgr.build(documents, inventory, cache_dir="cache/my-corpus")
 
-gold = [["doc-of-alice"], ["doc-of-bob"]]
-results = rag.retrieve(
-    queries=["Where does Alice live?", "Who works in Berlin?"],
-    corpus="dual_tree",
-    search="full_expansion",
-    fusion="agreement",
-    k=10,
-)
-retrieved = [r.documents for r in results]
-print(f"Recall@5: {recall_at_k(retrieved, gold, k=5):.3f}")
+question = "Who founded the company that ..."
+result = lgr.search([question], index, k=10)[0]
+
+result.ranking        # [(document id, score), ...], best first
+result.ids            # the document ids alone
+result.document_view  # document tree, {document id: score}
+result.memory_view    # memory tree projected to documents, {document id: score}
 ```
 
-## What now?
+`index.save("lgr_index")` writes the encoded index to a directory, and `lgr.load_index("lgr_index")` loads it
+later without encoding anything again; the whole workflow is on [Index a corpus, save, reuse](/docs/indexing).
 
-- Want to understand why the three axes factor cleanly? See **[Why Orthogonal?](/docs/concepts/why-orthogonal)**.
-- Want a richer walkthrough on a MuSiQue subset? Start the **[Tutorial](/docs/tutorial/01-install)**.
-- Want to mix search strategies, fusion modes, and corpus views with animated visualizations? See the **[Search Strategies](/docs/search/full-expansion)** pages.
+`PAPER` is the configuration behind every LatentGraphRAG row of the paper. `view="D"` gives the documents-only
+configuration; other views and operators are on the [Retrieval](/docs/retrieval) page.
+
+## 3. A seeded ReAct agent
+
+The top ten documents of the ranking become the agent's initial evidence. The agent's own search tool is a
+plain embedding search over a fixed index; `embeddings` are the precomputed document embeddings of that index.
+
+```python
+from latentgraphrag import DenseSearchTool, OpenAIChatModel, ReActAgent, Seed
+
+llm = OpenAIChatModel(model="Qwen/Qwen3.5-122B-A10B", base_url="http://localhost:8000/v1")
+
+ids = list(documents)
+search_tool = DenseSearchTool(embeddings, [documents[d] for d in ids], ids)
+
+agent = ReActAgent(llm, search_tool)                          # at most ten searches
+seed = Seed.from_ranking(result.ids, documents)               # top 10, each cut to 2,200 characters
+trajectory = agent.run(question, seed)
+
+trajectory.final_answer   # text after the last "Exact Answer:"
+trajectory.tool_calls     # searches issued (the seed is not one)
+```
+
+What `agent.run` does with a LatentGraphRAG seed, on a released MuSiQue question whose seed holds three of the
+four passages it needs: one search for the missing one, then the answer.
+
+<ReActDemo startSlide={1} />
+
+See [ReAct agent](/docs/agent).
+
+## 4. Grading
+
+```python
+from latentgraphrag import BrowseCompGrader, loose_final
+
+verdict = BrowseCompGrader(llm).grade(question, trajectory.output, gold_answer)
+verdict.correct    # True, False, or None when the grader gave no verdict (counted as incorrect)
+
+loose_final(trajectory.output, gold_list)   # list-valued answers, as for FanOutQA
+```
+
+Retrieve-then-read without an agent uses `Reader(llm).read(question, seed)` instead of the agent. See
+[Evaluation](/docs/evaluation).
+
+## Without model weights
+
+`tests/test_quickstart.py` runs the same four steps with a hashed fake encoder and a scripted chat model.
+It is the quickest way to check an installation, or to see how custom encoders and chat models plug in:
+
+```bash
+pytest tests/test_quickstart.py
+```
 
 <PrevNext pathname="/docs/quickstart" />

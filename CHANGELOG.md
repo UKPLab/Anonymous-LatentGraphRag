@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-15
+
+### Changed
+- Rebuilt on Recursive Dense Retrieval (RDR): the encoder, recursive search and global readout come from
+  RDR; LatentGraphRAG runs a document tree and a memory tree on it and fuses them at the source documents.
+- Memories are triples rendered literally as "head relation tail." and propositions, each linked to the
+  documents it was extracted from (`MemoryInventory`).
+- Retrieval views `D+M` (paper), `D`, `M`, `J` (joint index) and `D+J`; fusion operators CombMNZ, CombSUM,
+  z-agreement, RRF and max; projections max, sum, mean, soft maximum and noisy-OR.
+
+### Added
+- `latentgraphrag.agent`: the retrieval-first ReAct agent (seeds, search tools, policies, seed placement).
+- `latentgraphrag.evaluation`: retrieve-then-read reader, BrowseComp grader, list recall, recall@k.
+- `tests/parity`: identical rankings to the paper's research evaluator for every view and operator.
+- `LGRIndex.save` / `LGRIndex.load` and `LatentGraphRAG.load_index`: an encoded index (documents, memories,
+  inventory) is written to one directory and reused without encoding again.
+
+### Removed
+- The previous package: its own encoders and search strategies, the LLM verbalizer, the agreement and RRF
+  fusion modules, the old pipeline and the old reproduction harness and rankings.
+
+
 ### Added (v0.1.0-alpha)
 - **Three-axis API**: `corpus` × `search` × `fusion` — every paper-canonical combination
   expressible as a single `retrieve()` call.
